@@ -4,61 +4,55 @@ import (
 	"fmt"
 	"net"
 
-	gobgp "github.com/osrg/gobgp/server"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
+	"github.com/sapcc/kube-parrot/pkg/bgp"
+	"github.com/sapcc/kube-parrot/pkg/controller"
+	"github.com/sapcc/kube-parrot/pkg/kubernetes"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 var (
 	VERSION = "0.0.0.dev"
 )
 
-type Parrot struct {
-	client     *client.Client
-	bgpServer  *gobgp.BgpServer
-	grpcServer *gobgp.Server
-	Options
-}
-
-type neighbors []*net.IP
-
 type Options struct {
-	grpcPort     int
+	GrpcPort     int
 	As           int
 	LocalAddress net.IP
-	Neighbors    neighbors
+	Neighbors    []*net.IP
 }
 
-func (f *neighbors) String() string {
-	return fmt.Sprintf("%v", *f)
-}
+type Parrot struct {
+	Options
 
-func (i *neighbors) Set(value string) error {
-	ip := net.ParseIP(value)
-	if ip == nil {
-		return fmt.Errorf("%v is not a valid IP address", value)
-	}
-
-	*i = append(*i, &ip)
-	return nil
-}
-
-func (s *neighbors) Type() string {
-	return "neighborSlice"
+	client     *clientset.Clientset
+	bgp        *bgp.Server
+	podSubnets *controller.PodSubnetsController
 }
 
 func New(opts Options) *Parrot {
-	return &Parrot{Options: opts}
+	parrot := &Parrot{
+		Options: opts,
+		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort),
+		client:  kubernetes.NewClient(),
+	}
+
+	parrot.podSubnets = controller.NewPodSubnetsController(parrot.client, parrot.bgp)
+
+	return parrot
 }
 
 func (p *Parrot) Start() {
 	fmt.Printf("Welcome to Kubernetes Parrot %v\n", VERSION)
-	p.createKubernetesClient()
-	p.createpBGPServer()
-	p.startBGPServer()
-	p.addBGPNeighbors()
-	p.watchNodes()
+
+	p.bgp.Run(wait.NeverStop)
+	go p.podSubnets.Run(wait.NeverStop)
+
+	for _, neighbor := range p.Neighbors {
+		p.bgp.AddNeighbor(neighbor.String())
+	}
+
 }
 
 func (p *Parrot) Stop() {
-	p.bgpServer.Shutdown()
 }
