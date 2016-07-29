@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"net"
+	"sync"
 
 	goflag "flag"
 
+	"github.com/golang/glog"
 	flag "github.com/spf13/pflag"
 
 	"os"
@@ -31,23 +33,27 @@ func main() {
 	flag.Parse()
 
 	sigs := make(chan os.Signal, 1)
-	done := make(chan bool, 1)
+	stop := make(chan struct{})
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 
 	opts.Neighbors = neighbors
 	parrot := parrot.New(opts)
 
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
 	go func() {
-		parrot.Start()
+		parrot.Run(stop, wg)
 	}()
 
 	go func() {
 		<-sigs
-		parrot.Stop()
-		done <- true
+		glog.V(2).Infof("Got signal. Shuting down")
+		close(stop)
 	}()
 
-	<-done
+	wg.Wait()
+	glog.V(2).Infof("Shutdown Completed. Bye!")
 }
 
 func (f *Neighbors) String() string {

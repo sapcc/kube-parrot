@@ -3,12 +3,12 @@ package parrot
 import (
 	"fmt"
 	"net"
+	"sync"
 
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
 	"github.com/sapcc/kube-parrot/pkg/kubernetes"
 	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 var (
@@ -42,17 +42,15 @@ func New(opts Options) *Parrot {
 	return parrot
 }
 
-func (p *Parrot) Start() {
+func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	fmt.Printf("Welcome to Kubernetes Parrot %v\n", VERSION)
 
-	p.bgp.Run(wait.NeverStop)
-	go p.podSubnets.Run(wait.NeverStop)
+	p.bgp.Run(stopCh, wg)
+	p.podSubnets.Run(stopCh)
 
 	for _, neighbor := range p.Neighbors {
 		p.bgp.AddNeighbor(neighbor.String())
 	}
-
-}
-
-func (p *Parrot) Stop() {
 }

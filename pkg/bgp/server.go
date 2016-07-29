@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang/glog"
@@ -38,9 +39,18 @@ func NewServer(localAddress net.IP, as int, port int) *Server {
 	return server
 }
 
-func (s *Server) Run(stopCh <-chan struct{}) {
+func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
+	wg.Add(1)
+
 	go s.bgp.Serve()
 	go s.grpc.Serve()
+	go func() {
+		defer wg.Done()
+
+		<-stopCh
+		s.bgp.Shutdown()
+		glog.V(2).Infof("BGP Server Stopped")
+	}()
 
 	time.Sleep(1 * time.Second)
 	s.startServer()
