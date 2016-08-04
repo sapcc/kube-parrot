@@ -40,19 +40,12 @@ func main() {
 	parrot := parrot.New(opts)
 
 	wg := &sync.WaitGroup{}
-	wg.Add(1)
+	parrot.Run(stop, wg)
 
-	go func() {
-		parrot.Run(stop, wg)
-	}()
+	<-sigs      // Wait for signals
+	close(stop) // Stop all goroutines
+	wg.Wait()   // Wait for all to be stopped
 
-	go func() {
-		<-sigs
-		glog.V(2).Infof("Got signal. Shuting down")
-		close(stop)
-	}()
-
-	wg.Wait()
 	glog.V(2).Infof("Shutdown Completed. Bye!")
 }
 

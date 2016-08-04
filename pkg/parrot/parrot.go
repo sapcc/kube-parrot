@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
@@ -43,14 +44,16 @@ func New(opts Options) *Parrot {
 }
 
 func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
-	defer wg.Done()
-
 	fmt.Printf("Welcome to Kubernetes Parrot %v\n", VERSION)
 
-	p.bgp.Run(stopCh, wg)
-	p.podSubnets.Run(stopCh)
+	go p.bgp.Run(stopCh, wg)
+
+	// Wait for BGP main loop
+	time.Sleep(1 * time.Second)
 
 	for _, neighbor := range p.Neighbors {
 		p.bgp.AddNeighbor(neighbor.String())
 	}
+
+	go p.podSubnets.Run(stopCh)
 }

@@ -40,20 +40,17 @@ func NewServer(localAddress net.IP, as int, port int) *Server {
 }
 
 func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
 	wg.Add(1)
 
 	go s.bgp.Serve()
 	go s.grpc.Serve()
-	go func() {
-		defer wg.Done()
-
-		<-stopCh
-		s.bgp.Shutdown()
-		glog.V(2).Infof("BGP Server Stopped")
-	}()
 
 	time.Sleep(1 * time.Second)
 	s.startServer()
+
+	<-stopCh
+	s.bgp.Stop()
 }
 
 func (s *Server) startServer() {

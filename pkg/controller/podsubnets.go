@@ -49,7 +49,7 @@ func NewPodSubnetsController(client *clientset.Clientset, bgp *bgp.Server) *PodS
 }
 
 func (n *PodSubnetsController) Run(stopCh <-chan struct{}) {
-	go n.controller.Run(stopCh)
+	n.controller.Run(stopCh)
 }
 
 func (n *PodSubnetsController) addNode(obj interface{}) {
