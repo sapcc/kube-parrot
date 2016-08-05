@@ -3,20 +3,20 @@ package bgp
 import (
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang/glog"
-	"github.com/osrg/gobgp/api"
-	"github.com/osrg/gobgp/gobgp/cmd"
+	api "github.com/osrg/gobgp/api"
+	"github.com/osrg/gobgp/config"
 	"github.com/osrg/gobgp/packet/bgp"
 	gobgp "github.com/osrg/gobgp/server"
+	"github.com/osrg/gobgp/table"
 )
 
 type Server struct {
 	bgp  *gobgp.BgpServer
-	grpc *gobgp.Server
+	grpc *api.Server
 
 	as           uint32
 	routerId     string
@@ -31,9 +31,9 @@ func NewServer(localAddress net.IP, as int, port int) *Server {
 	}
 
 	server.bgp = gobgp.NewBgpServer()
-	server.grpc = gobgp.NewGrpcServer(
+	server.grpc = api.NewGrpcServer(
+		server.bgp,
 		fmt.Sprintf(":%v", port),
-		server.bgp.GrpcReqCh,
 	)
 
 	return server
@@ -51,69 +51,47 @@ func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 
 	<-stopCh
 	s.bgp.Stop()
+	time.Sleep(1 * time.Second)
 }
 
 func (s *Server) startServer() {
-	req := gobgp.NewGrpcRequest(gobgp.REQ_START_SERVER, "", bgp.RouteFamily(0), &gobgpapi.StartServerRequest{
-		Global: &gobgpapi.Global{
+	global := &config.Global{
+		Config: config.GlobalConfig{
 			As:       s.as,
 			RouterId: s.routerId,
+			Port:     -1,
 		},
-	})
-	s.bgp.GrpcReqCh <- req
-	res := <-req.ResponseCh
-	if err := res.Err(); err != nil {
+	}
+
+	if err := s.bgp.Start(global); err != nil {
 		glog.Errorf("Oops. Something went wrong starting bgp server: %s", err)
 	}
 }
 
-func (s *Server) AddRoute(route []string) {
-	glog.Infof("Adding Route: %s", strings.Join(route, " "))
-	path, _ := cmd.ParsePath(bgp.RF_IPv4_UC, route)
-	req := gobgp.NewGrpcRequest(gobgp.REQ_ADD_PATH, "", bgp.RouteFamily(0), &gobgpapi.AddPathRequest{
-		Resource: gobgpapi.Resource_GLOBAL,
-		Path:     path,
-	})
-
-	s.bgp.GrpcReqCh <- req
-	res := <-req.ResponseCh
-	if err := res.Err(); err != nil {
-		glog.Errorf("Oops. Something went wrong adding route: %s", err)
+func (s *Server) AddPath(path *table.Path) {
+	glog.Infof("Adding Path: %s", path)
+	if _, err := s.bgp.AddPath("", []*table.Path{path}); err != nil {
+		glog.Errorf("Oops. Something went wrong adding path: %s", err)
 	}
 }
 
-func (s *Server) DeleteRoute(route []string) {
-	glog.Infof("Deleting Route: %s", strings.Join(route, " "))
-	path, _ := cmd.ParsePath(bgp.RF_IPv4_UC, route)
-	req := gobgp.NewGrpcRequest(gobgp.REQ_ADD_PATH, "", bgp.RouteFamily(0), &gobgpapi.DeletePathRequest{
-		Resource: gobgpapi.Resource_GLOBAL,
-		Path:     path,
-	})
-
-	s.bgp.GrpcReqCh <- req
-	res := <-req.ResponseCh
-	if err := res.Err(); err != nil {
+func (s *Server) DeletePath(path *table.Path) {
+	glog.Infof("Deleting Path: %s", path)
+	if err := s.bgp.DeletePath(nil, bgp.RF_IPv4_UC, "", []*table.Path{path}); err != nil {
 		glog.Errorf("Oops. Something went wrong deleting route: %s", err)
 	}
 }
 
 func (s *Server) AddNeighbor(neighbor string) {
 	glog.Infof("Adding Neighbor: %s", neighbor)
-	req := gobgp.NewGrpcRequest(gobgp.REQ_GRPC_ADD_NEIGHBOR, "", bgp.RouteFamily(0), &gobgpapi.AddNeighborRequest{
-		Peer: &gobgpapi.Peer{
-			Conf: &gobgpapi.PeerConf{
-				NeighborAddress: neighbor,
-				PeerAs:          s.as,
-			},
-			Transport: &gobgpapi.Transport{
-				LocalAddress: s.localAddress,
-			},
+	n := &config.Neighbor{
+		Config: config.NeighborConfig{
+			NeighborAddress: neighbor,
+			PeerAs:          s.as,
 		},
-	})
+	}
 
-	s.bgp.GrpcReqCh <- req
-	res := <-req.ResponseCh
-	if err := res.Err(); err != nil {
+	if err := s.bgp.AddNeighbor(n); err != nil {
 		glog.Errorf("Oops. Something went wrong adding neighbor: %s", err)
 	}
 }

@@ -187,7 +187,7 @@ imports:
 - name: gopkg.in/yaml.v2
   version: ""
 - name: k8s.io/kubernetes
-  version: 55fb0caedab477d1736fc2cb46719266e5b4f20f
+  version: dd6b458ef8dbf24aff55795baa68f83383c9b3a9
   subpackages:
   - pkg/api
   - pkg/client/cache

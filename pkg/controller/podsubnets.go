@@ -62,7 +62,7 @@ func (n *PodSubnetsController) addNode(obj interface{}) {
 		return
 	}
 
-	n.bgp.AddRoute(route)
+	n.bgp.AddPath(route)
 }
 
 func (n *PodSubnetsController) deleteNode(obj interface{}) {
@@ -75,5 +75,5 @@ func (n *PodSubnetsController) deleteNode(obj interface{}) {
 		return
 	}
 
-	n.bgp.DeleteRoute(route)
+	n.bgp.DeletePath(route)
 }

@@ -3,11 +3,15 @@ package controller
 import (
 	"fmt"
 	"net"
+	"time"
+
+	"github.com/osrg/gobgp/packet/bgp"
+	"github.com/osrg/gobgp/table"
 
 	"k8s.io/kubernetes/pkg/api"
 )
 
-func getPodSubnetRoute(node *api.Node) ([]string, error) {
+func getPodSubnetRoute(node *api.Node) (*table.Path, error) {
 	nodeIP, err := getNodeIP(node)
 	if err != nil {
 		return nil, err
@@ -18,7 +22,15 @@ func getPodSubnetRoute(node *api.Node) ([]string, error) {
 		return nil, err
 	}
 
-	return []string{podSubnet.String(), "nexthop", nodeIP.String()}, nil
+	prefix, _ := podSubnet.Mask.Size()
+	nlri := bgp.NewIPAddrPrefix(uint8(prefix), podSubnet.IP.String())
+
+	pattr := []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
+		bgp.NewPathAttributeNextHop(nodeIP.String()),
+	}
+
+	return table.NewPath(nil, nlri, false, pattr, time.Now(), false), nil
 }
 
 func getNodeIP(node *api.Node) (net.IP, error) {
