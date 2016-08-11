@@ -29,6 +29,7 @@ func init() {
 }
 
 func main() {
+	goflag.CommandLine.Parse([]string{})
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 	flag.Parse()
 
