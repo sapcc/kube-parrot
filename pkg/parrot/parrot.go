@@ -9,7 +9,7 @@ import (
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
 	"github.com/sapcc/kube-parrot/pkg/kubernetes"
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	"k8s.io/client-go/1.4/kubernetes"
 )
 
 var (
@@ -26,9 +26,10 @@ type Options struct {
 type Parrot struct {
 	Options
 
-	client     *clientset.Clientset
-	bgp        *bgp.Server
-	podSubnets *controller.PodSubnetsController
+	client          *kubernetes.Clientset
+	bgp             *bgp.Server
+	podSubnets      *controller.PodSubnetsController
+	externalSevices *controller.ExternalServicesController
 }
 
 func New(opts Options) *Parrot {
@@ -39,6 +40,7 @@ func New(opts Options) *Parrot {
 	}
 
 	parrot.podSubnets = controller.NewPodSubnetsController(parrot.client, parrot.bgp)
+	parrot.externalSevices = controller.NewExternalServicesController(parrot.client)
 
 	return parrot
 }
@@ -56,4 +58,5 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	}
 
 	go p.podSubnets.Run(stopCh)
+	go p.externalSevices.Run(stopCh, wg)
 }

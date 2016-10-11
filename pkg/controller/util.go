@@ -8,7 +8,7 @@ import (
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/table"
 
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/client-go/1.4/pkg/api"
 )
 
 func getPodSubnetRoute(node *api.Node) (*table.Path, error) {

@@ -3,11 +3,11 @@ package kubernetes
 import (
 	"github.com/golang/glog"
 
-	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
+	"k8s.io/client-go/1.4/kubernetes"
+	"k8s.io/client-go/1.4/tools/clientcmd"
 )
 
-func NewClient() *clientset.Clientset {
+func NewClient() *kubernetes.Clientset {
 	glog.V(2).Infof("Creating Client")
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	overrides := &clientcmd.ConfigOverrides{}
@@ -17,7 +17,7 @@ func NewClient() *clientset.Clientset {
 		glog.Fatalf("Couldn't get Kubernetes default config: %s", err)
 	}
 
-	client, err := clientset.NewForConfig(config)
+	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		glog.Fatalf("Couldn't create Kubernetes client: %s", err)
 	}
