@@ -19,7 +19,10 @@ var ErrUnknownCall = errors.New("unknown call")
 
 const (
 	// MinTime is used as the minimum time value when computing an unbounded range.
-	MinTime = int64(0)
+	// This time is one less than the MinNanoTime so that the first minimum
+	// time can be used as a sentinel value to signify that it is the default
+	// value rather than explicitly set by the user.
+	MinTime = models.MinNanoTime - 1
 
 	// MaxTime is used as the maximum time value when computing an unbounded range.
 	// This time is 2262-04-11 23:47:16.854775806 +0000 UTC
@@ -776,7 +779,7 @@ func newIteratorOptionsStmt(stmt *SelectStatement, sopt *SelectOptions) (opt Ite
 	if interval < 0 {
 		interval = 0
 	} else if interval > 0 {
-		opt.Interval.Offset, err = stmt.GroupByOffset(&opt)
+		opt.Interval.Offset, err = stmt.GroupByOffset()
 		if err != nil {
 			return opt, err
 		}
@@ -840,7 +843,13 @@ func (opt IteratorOptions) Window(t int64) (start, end int64) {
 	t -= int64(opt.Interval.Offset)
 
 	// Truncate time by duration.
-	t -= t % int64(opt.Interval.Duration)
+	dt := t % int64(opt.Interval.Duration)
+	if dt < 0 {
+		// Negative modulo rounds up instead of down, so offset
+		// with the duration.
+		dt += int64(opt.Interval.Duration)
+	}
+	t -= dt
 
 	// Apply the offset.
 	start = t + int64(opt.Interval.Offset)

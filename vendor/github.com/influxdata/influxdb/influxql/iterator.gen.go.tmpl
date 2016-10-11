@@ -671,6 +671,26 @@ func (itr *{{$k.name}}FillIterator) Next() (*{{$k.Name}}Point, error) {
 		}
 
 		switch itr.opt.Fill {
+		case LinearFill:
+			{{- if or (eq $k.Name "Float") (eq $k.Name "Integer")}}
+			if !itr.prev.Nil {
+				next, err := itr.input.peek()
+				if err != nil {
+					return nil, err
+				}
+				if next != nil {
+					interval := int64(itr.opt.Interval.Duration)
+					start := itr.window.time / interval
+					p.Value = linear{{$k.Name}}(start, itr.prev.Time/interval, next.Time/interval, itr.prev.Value, next.Value)
+				} else {
+					p.Nil = true
+				}
+			} else {
+				p.Nil = true
+			}
+			{{else}}
+			fallthrough
+			{{- end}}
 		case NullFill:
 			p.Nil = true
 		case NumberFill:
@@ -717,6 +737,11 @@ func (itr *{{$k.name}}IntervalIterator) Next() (*{{$k.Name}}Point, error) {
 		return nil, err
 	}
 	p.Time, _ = itr.opt.Window(p.Time)
+	// If we see the minimum allowable time, set the time to zero so we don't
+	// break the default returned time for aggregate queries without times.
+	if p.Time == MinTime {
+		p.Time = 0
+	}
 	return p, nil
 }
 

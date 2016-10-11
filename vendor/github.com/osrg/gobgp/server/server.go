@@ -1,4 +1,4 @@
-// Copyright (C) 2014 Nippon Telegraph and Telephone Corporation.
+// Copyright (C) 2014-2016 Nippon Telegraph and Telephone Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,19 +21,15 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"sync"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
-	"github.com/armon/go-radix"
 	"github.com/eapache/channels"
 	"github.com/osrg/gobgp/config"
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/table"
 	"github.com/satori/go.uuid"
 )
-
-var policyMutex sync.RWMutex
 
 type TCPListener struct {
 	l  *net.TCPListener
@@ -107,7 +103,7 @@ type BgpServer struct {
 	watcherMap  map[WatchEventType][]*Watcher
 	zclient     *zebraClient
 	bmpManager  *bmpClientManager
-	mrt         *mrtWriter
+	mrtManager  *mrtManager
 }
 
 func NewBgpServer() *BgpServer {
@@ -120,6 +116,7 @@ func NewBgpServer() *BgpServer {
 		watcherMap:  make(map[WatchEventType][]*Watcher),
 	}
 	s.bmpManager = newBmpClientManager(s)
+	s.mrtManager = newMrtManager(s)
 	return s
 }
 
@@ -270,7 +267,7 @@ func isASLoop(peer *Peer, path *table.Path) bool {
 	return false
 }
 
-func filterpath(peer *Peer, path *table.Path) *table.Path {
+func filterpath(peer *Peer, path *table.Path, withdrawals []*table.Path) *table.Path {
 	if path == nil {
 		return nil
 	}
@@ -342,6 +339,17 @@ func filterpath(peer *Peer, path *table.Path) *table.Path {
 		}
 
 		if ignore {
+
+			for _, adv := range peer.adjRibOut.PathList([]bgp.RouteFamily{path.GetRouteFamily()}, false) {
+				// we advertise a route from ebgp,
+				// which is the old best. We got the
+				// new best from ibgp. We don't
+				// advertise the new best and need to
+				// withdraw the old.
+				if path.GetNlri().String() == adv.GetNlri().String() {
+					return adv.Clone(true)
+				}
+			}
 			log.WithFields(log.Fields{
 				"Topic": "Peer",
 				"Key":   peer.ID(),
@@ -352,6 +360,25 @@ func filterpath(peer *Peer, path *table.Path) *table.Path {
 	}
 
 	if peer.ID() == path.GetSource().Address.String() {
+		// Say, gobgp was advertising prefix A and peer P also.
+		// When gobgp withdraws prefix A, best path calculation chooses
+		// the path from P as the best path for prefix A.
+		// For peers other than P, this path should be advertised
+		// (as implicit withdrawal). However for P, we should advertise
+		// the local withdraw path.
+
+		// Note: multiple paths having the same prefix could exist the
+		// withdrawals list in the case of Route Server setup with
+		// import policies modifying paths. In such case, gobgp sends
+		// duplicated update messages; withdraw messages for the same
+		// prefix.
+		// However, currently we don't support local path for Route
+		// Server setup so this is NOT the case.
+		for _, w := range withdrawals {
+			if w.IsLocal() && path.GetNlri().String() == w.GetNlri().String() {
+				return w
+			}
+		}
 		log.WithFields(log.Fields{
 			"Topic": "Peer",
 			"Key":   peer.ID(),
@@ -376,6 +403,25 @@ func clonePathList(pathList []*table.Path) []*table.Path {
 	return l
 }
 
+func (server *BgpServer) notifyBestWatcher(best map[string][]*table.Path, multipath [][]*table.Path) {
+	clonedM := make([][]*table.Path, len(multipath))
+	for i, pathList := range multipath {
+		clonedM[i] = clonePathList(pathList)
+	}
+	clonedB := clonePathList(best[table.GLOBAL_RIB_NAME])
+	for _, p := range clonedB {
+		switch p.GetRouteFamily() {
+		case bgp.RF_IPv4_VPN, bgp.RF_IPv6_VPN:
+			for _, vrf := range server.globalRib.Vrfs {
+				if table.CanImportToVrf(vrf, p) {
+					p.VrfIds = append(p.VrfIds, uint16(vrf.Id))
+				}
+			}
+		}
+	}
+	server.notifyWatcher(WATCH_EVENT_TYPE_BEST_PATH, &WatchEventBestPath{PathList: clonedB, MultiPathList: clonedM})
+}
+
 func (server *BgpServer) dropPeerAllRoutes(peer *Peer, families []bgp.RouteFamily) {
 	ids := make([]string, 0, len(server.neighborMap))
 	if peer.isRouteServerClient() {
@@ -390,13 +436,8 @@ func (server *BgpServer) dropPeerAllRoutes(peer *Peer, families []bgp.RouteFamil
 	}
 	for _, rf := range families {
 		best, _, multipath := server.globalRib.DeletePathsByPeer(ids, peer.fsm.peerInfo, rf)
-
 		if !peer.isRouteServerClient() {
-			clonedMpath := make([][]*table.Path, len(multipath))
-			for i, pathList := range multipath {
-				clonedMpath[i] = clonePathList(pathList)
-			}
-			server.notifyWatcher(WATCH_EVENT_TYPE_BEST_PATH, &WatchEventBestPath{PathList: clonePathList(best[table.GLOBAL_RIB_NAME]), MultiPathList: clonedMpath})
+			server.notifyBestWatcher(best, multipath)
 		}
 
 		for _, targetPeer := range server.neighborMap {
@@ -545,12 +586,7 @@ func (server *BgpServer) propagateUpdate(peer *Peer, pathList []*table.Path) []*
 		if len(best[table.GLOBAL_RIB_NAME]) == 0 {
 			return alteredPathList
 		}
-		clonedMpath := make([][]*table.Path, len(multipath))
-		for i, pathList := range multipath {
-			clonedMpath[i] = clonePathList(pathList)
-		}
-		server.notifyWatcher(WATCH_EVENT_TYPE_BEST_PATH, &WatchEventBestPath{PathList: clonePathList(best[table.GLOBAL_RIB_NAME]), MultiPathList: clonedMpath})
-
+		server.notifyBestWatcher(best, multipath)
 	}
 
 	for _, targetPeer := range server.neighborMap {
@@ -848,7 +884,7 @@ func (s *BgpServer) StartCollector(c *config.CollectorConfig) (err error) {
 	return err
 }
 
-func (s *BgpServer) StartZebraClient(x *config.Zebra) (err error) {
+func (s *BgpServer) StartZebraClient(c *config.ZebraConfig) (err error) {
 	ch := make(chan struct{})
 	defer func() { <-ch }()
 
@@ -858,13 +894,11 @@ func (s *BgpServer) StartZebraClient(x *config.Zebra) (err error) {
 		if s.zclient != nil {
 			err = fmt.Errorf("already connected to Zebra")
 		} else {
-			c := x.Config
-
 			protos := make([]string, 0, len(c.RedistributeRouteTypeList))
 			for _, p := range c.RedistributeRouteTypeList {
 				protos = append(protos, string(p))
 			}
-			s.zclient, err = newZebraClient(s, c.Url, protos)
+			s.zclient, err = newZebraClient(s, c.Url, protos, c.Version)
 		}
 	}
 	return err
@@ -916,46 +950,18 @@ func (s *BgpServer) UpdatePolicy(policy config.RoutingPolicy) (err error) {
 	s.mgmtCh <- func() {
 		defer close(ch)
 
-		err = s.handlePolicy(policy)
+		ap := make(map[string]config.ApplyPolicy, len(s.neighborMap)+1)
+		ap[table.GLOBAL_RIB_NAME] = s.bgpConfig.Global.ApplyPolicy
+		for _, peer := range s.neighborMap {
+			log.WithFields(log.Fields{
+				"Topic": "Peer",
+				"Key":   peer.fsm.pConf.Config.NeighborAddress,
+			}).Info("call set policy")
+			ap[peer.ID()] = peer.fsm.pConf.ApplyPolicy
+		}
+		err = s.policy.Reset(&policy, ap)
 	}
 	return err
-}
-
-// This function MUST be called with policyMutex locked.
-// FIXME: move policyMutex to table/policy.go
-func (server *BgpServer) setPolicyByConfig(id string, c config.ApplyPolicy) {
-	for _, dir := range []table.PolicyDirection{table.POLICY_DIRECTION_IN, table.POLICY_DIRECTION_IMPORT, table.POLICY_DIRECTION_EXPORT} {
-		ps, def, err := server.policy.GetAssignmentFromConfig(dir, c)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"Topic": "Policy",
-				"Dir":   dir,
-			}).Errorf("failed to get policy info: %s", err)
-			continue
-		}
-		server.policy.SetDefaultPolicy(id, dir, def)
-		server.policy.SetPolicy(id, dir, ps)
-	}
-}
-
-func (server *BgpServer) handlePolicy(pl config.RoutingPolicy) error {
-	policyMutex.Lock()
-	defer policyMutex.Unlock()
-	if err := server.policy.Reload(pl); err != nil {
-		log.WithFields(log.Fields{
-			"Topic": "Policy",
-		}).Errorf("failed to create routing policy: %s", err)
-		return err
-	}
-	server.setPolicyByConfig(table.GLOBAL_RIB_NAME, server.bgpConfig.Global.ApplyPolicy)
-	for _, peer := range server.neighborMap {
-		log.WithFields(log.Fields{
-			"Topic": "Peer",
-			"Key":   peer.fsm.pConf.Config.NeighborAddress,
-		}).Info("call set policy")
-		server.setPolicyByConfig(peer.ID(), peer.fsm.pConf.ApplyPolicy)
-	}
-	return nil
 }
 
 // EVPN MAC MOBILITY HANDLING
@@ -1040,37 +1046,19 @@ func (server *BgpServer) fixupApiPath(vrfId string, pathList []*table.Path) erro
 			path.SetSource(pi)
 		}
 
-		extcomms := make([]bgp.ExtendedCommunityInterface, 0)
-		nlri := path.GetNlri()
-		rf := bgp.AfiSafiToRouteFamily(nlri.AFI(), nlri.SAFI())
-
 		if vrfId != "" {
 			label, err := server.globalRib.GetNextLabel(vrfId, path.GetNexthop().String(), path.IsWithdraw)
 			if err != nil {
 				return err
 			}
 			vrf := server.globalRib.Vrfs[vrfId]
-			switch rf {
-			case bgp.RF_IPv4_UC:
-				n := nlri.(*bgp.IPAddrPrefix)
-				nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(label), vrf.Rd)
-			case bgp.RF_IPv6_UC:
-				n := nlri.(*bgp.IPv6AddrPrefix)
-				nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(label), vrf.Rd)
-			case bgp.RF_EVPN:
-				n := nlri.(*bgp.EVPNNLRI)
-				switch n.RouteType {
-				case bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT:
-					n.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute).RD = vrf.Rd
-				case bgp.EVPN_INCLUSIVE_MULTICAST_ETHERNET_TAG:
-					n.RouteTypeData.(*bgp.EVPNMulticastEthernetTagRoute).RD = vrf.Rd
-				}
-			default:
-				return fmt.Errorf("unsupported route family for vrf: %s", rf)
+			if err := vrf.ToGlobalPath(path, label); err != nil {
+				return err
 			}
-			extcomms = append(extcomms, vrf.ExportRt...)
 		}
-		if rf == bgp.RF_EVPN {
+
+		if path.GetRouteFamily() == bgp.RF_EVPN {
+			nlri := path.GetNlri()
 			evpnNlri := nlri.(*bgp.EVPNNLRI)
 			if evpnNlri.RouteType == bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT {
 				macIpAdv := evpnNlri.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
@@ -1078,14 +1066,11 @@ func (server *BgpServer) fixupApiPath(vrfId string, pathList []*table.Path) erro
 				mac := macIpAdv.MacAddress
 				paths := server.globalRib.GetBestPathList(table.GLOBAL_RIB_NAME, []bgp.RouteFamily{bgp.RF_EVPN})
 				if m := getMacMobilityExtendedCommunity(etag, mac, paths); m != nil {
-					extcomms = append(extcomms, m)
+					path.SetExtCommunities([]bgp.ExtendedCommunityInterface{m}, false)
 				}
 			}
 		}
 
-		if len(extcomms) > 0 {
-			path.SetExtCommunities(extcomms, false)
-		}
 	}
 	return nil
 }
@@ -1186,8 +1171,7 @@ func (s *BgpServer) Start(c *config.Global) (err error) {
 		rfs, _ := config.AfiSafis(c.AfiSafis).ToRfList()
 		s.globalRib = table.NewTableManager(rfs, c.MplsLabelRange.MinLabel, c.MplsLabelRange.MaxLabel)
 
-		p := config.RoutingPolicy{}
-		if err = s.handlePolicy(p); err != nil {
+		if err = s.policy.Reset(&config.RoutingPolicy{}, map[string]config.ApplyPolicy{}); err != nil {
 			return
 		}
 		s.bgpConfig.Global = *c
@@ -1215,7 +1199,7 @@ func (s *BgpServer) GetVrf() (l []*table.Vrf) {
 	return l
 }
 
-func (s *BgpServer) AddVrf(name string, rd bgp.RouteDistinguisherInterface, im, ex []bgp.ExtendedCommunityInterface) (err error) {
+func (s *BgpServer) AddVrf(name string, id uint32, rd bgp.RouteDistinguisherInterface, im, ex []bgp.ExtendedCommunityInterface) (err error) {
 	ch := make(chan struct{})
 	defer func() { <-ch }()
 
@@ -1230,7 +1214,7 @@ func (s *BgpServer) AddVrf(name string, rd bgp.RouteDistinguisherInterface, im, 
 			AS:      s.bgpConfig.Global.Config.As,
 			LocalID: net.ParseIP(s.bgpConfig.Global.Config.RouterId).To4(),
 		}
-		if pathList, e := s.globalRib.AddVrf(name, rd, im, ex, pi); e != nil {
+		if pathList, e := s.globalRib.AddVrf(name, id, rd, im, ex, pi); e != nil {
 			err = e
 		} else if len(pathList) > 0 {
 			s.propagateUpdate(nil, pathList)
@@ -1424,28 +1408,15 @@ func (s *BgpServer) SoftReset(addr string, family bgp.RouteFamily) (err error) {
 	return err
 }
 
-type LookupOption uint8
-
-const (
-	LOOKUP_EXACT LookupOption = iota
-	LOOKUP_LONGER
-	LOOKUP_SHORTER
-)
-
-type LookupPrefix struct {
-	Prefix string
-	LookupOption
-}
-
-func (s *BgpServer) GetRib(addr string, family bgp.RouteFamily, prefixes []*LookupPrefix) (id string, dsts map[string][]*table.Path, err error) {
+func (s *BgpServer) GetRib(addr string, family bgp.RouteFamily, prefixes []*table.LookupPrefix) (rib *table.Table, err error) {
 	ch := make(chan struct{})
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
 		defer close(ch)
 
-		rib := s.globalRib
-		id = table.GLOBAL_RIB_NAME
+		m := s.globalRib
+		id := table.GLOBAL_RIB_NAME
 		if len(addr) > 0 {
 			peer, ok := s.neighborMap[addr]
 			if !ok {
@@ -1459,113 +1430,49 @@ func (s *BgpServer) GetRib(addr string, family bgp.RouteFamily, prefixes []*Look
 			id = peer.ID()
 		}
 		af := bgp.RouteFamily(family)
-		if _, ok := rib.Tables[af]; !ok {
+		tbl, ok := m.Tables[af]
+		if !ok {
 			err = fmt.Errorf("address family: %s not supported", af)
 			return
 		}
-
-		dsts = make(map[string][]*table.Path)
-		if (af == bgp.RF_IPv4_UC || af == bgp.RF_IPv6_UC) && len(prefixes) > 0 {
-			f := func(id, cidr string) (bool, error) {
-				_, prefix, err := net.ParseCIDR(cidr)
-				if err != nil {
-					return false, err
-				}
-				if dst := rib.Tables[af].GetDestination(prefix.String()); dst != nil {
-					if paths := dst.GetKnownPathList(id); len(paths) > 0 {
-						dsts[dst.GetNlri().String()] = clonePathList(paths)
-					}
-					return true, nil
-				} else {
-					return false, nil
-				}
-			}
-			for _, p := range prefixes {
-				key := p.Prefix
-				switch p.LookupOption {
-				case LOOKUP_LONGER:
-					_, prefix, _ := net.ParseCIDR(key)
-					for _, dst := range rib.Tables[af].GetLongerPrefixDestinations(prefix.String()) {
-						if paths := dst.GetKnownPathList(id); len(paths) > 0 {
-							dsts[dst.GetNlri().String()] = clonePathList(paths)
-						}
-					}
-
-				case LOOKUP_SHORTER:
-					_, prefix, _ := net.ParseCIDR(key)
-					ones, bits := prefix.Mask.Size()
-					for i := ones; i > 0; i-- {
-						prefix.Mask = net.CIDRMask(i, bits)
-						f(id, prefix.String())
-					}
-				default:
-					if _, err := f(id, key); err != nil {
-						if host := net.ParseIP(key); host != nil {
-							masklen := 32
-							if af == bgp.RF_IPv6_UC {
-								masklen = 128
-							}
-							for i := masklen; i > 0; i-- {
-								if y, _ := f(id, fmt.Sprintf("%s/%d", key, i)); y {
-									break
-								}
-							}
-						}
-					}
-				}
-			}
-		} else {
-			for _, dst := range rib.Tables[af].GetSortedDestinations() {
-				if paths := dst.GetKnownPathList(id); len(paths) > 0 {
-					dsts[dst.GetNlri().String()] = clonePathList(paths)
-				}
-			}
-		}
+		rib, err = tbl.Select(table.TableSelectOption{ID: id, LookupPrefixes: prefixes})
 	}
-	return id, dsts, err
+	return
 }
 
-func (s *BgpServer) GetVrfRib(name string, family bgp.RouteFamily, prefixes []*LookupPrefix) (id string, dsts map[string][]*table.Path, err error) {
+func (s *BgpServer) GetVrfRib(name string, family bgp.RouteFamily, prefixes []*table.LookupPrefix) (rib *table.Table, err error) {
 	ch := make(chan struct{})
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
 		defer close(ch)
 
-		rib := s.globalRib
-		vrfs := rib.Vrfs
+		m := s.globalRib
+		vrfs := m.Vrfs
 		if _, ok := vrfs[name]; !ok {
 			err = fmt.Errorf("vrf %s not found", name)
 			return
 		}
-		var rf bgp.RouteFamily
+		var af bgp.RouteFamily
 		switch family {
 		case bgp.RF_IPv4_UC:
-			rf = bgp.RF_IPv4_VPN
+			af = bgp.RF_IPv4_VPN
 		case bgp.RF_IPv6_UC:
-			rf = bgp.RF_IPv6_VPN
+			af = bgp.RF_IPv6_VPN
 		case bgp.RF_EVPN:
-			rf = bgp.RF_EVPN
-		default:
-			err = fmt.Errorf("unsupported route family: %s", family)
+			af = bgp.RF_EVPN
+		}
+		tbl, ok := m.Tables[af]
+		if !ok {
+			err = fmt.Errorf("address family: %s not supported", af)
 			return
 		}
-
-		dsts = make(map[string][]*table.Path)
-		for _, path := range rib.GetPathList(table.GLOBAL_RIB_NAME, []bgp.RouteFamily{rf}) {
-			if ok := table.CanImportToVrf(vrfs[name], path); ok {
-				if d, y := dsts[path.GetNlri().String()]; y {
-					d = append(d, path.Clone(false))
-				} else {
-					dsts[path.GetNlri().String()] = []*table.Path{path.Clone(false)}
-				}
-			}
-		}
+		rib, err = tbl.Select(table.TableSelectOption{VRF: vrfs[name], LookupPrefixes: prefixes})
 	}
-	return table.GLOBAL_RIB_NAME, dsts, err
+	return
 }
 
-func (s *BgpServer) GetAdjRib(addr string, family bgp.RouteFamily, in bool, prefixes []*LookupPrefix) (id string, dsts map[string][]*table.Path, err error) {
+func (s *BgpServer) GetAdjRib(addr string, family bgp.RouteFamily, in bool, prefixes []*table.LookupPrefix) (rib *table.Table, err error) {
 	ch := make(chan struct{})
 	defer func() { <-ch }()
 
@@ -1577,66 +1484,17 @@ func (s *BgpServer) GetAdjRib(addr string, family bgp.RouteFamily, in bool, pref
 			err = fmt.Errorf("Neighbor that has %v doesn't exist.", addr)
 			return
 		}
-		id = peer.TableID()
+		id := peer.TableID()
 
-		var paths []*table.Path
+		var adjRib *table.AdjRib
 		if in {
-			paths = peer.adjRibIn.PathList([]bgp.RouteFamily{family}, false)
-			log.WithFields(log.Fields{
-				"Topic": "Peer",
-			}).Debugf("RouteFamily=%v adj-rib-in found : %d", family.String(), len(paths))
+			adjRib = peer.adjRibIn
 		} else {
-			paths = peer.adjRibOut.PathList([]bgp.RouteFamily{family}, false)
-			log.WithFields(log.Fields{
-				"Topic": "Peer",
-			}).Debugf("RouteFamily=%v adj-rib-out found : %d", family.String(), len(paths))
+			adjRib = peer.adjRibOut
 		}
-
-		for i, p := range paths {
-			paths[i] = p.Clone(false)
-			paths[i].Filter(id, p.Filtered(id))
-		}
-
-		dsts = make(map[string][]*table.Path)
-		switch family {
-		case bgp.RF_IPv4_UC, bgp.RF_IPv6_UC:
-			r := radix.New()
-			for _, p := range paths {
-				key := p.GetNlri().String()
-				found := true
-				for _, p := range prefixes {
-					found = false
-					if p.Prefix == key {
-						found = true
-						break
-					}
-				}
-
-				if found {
-					b, _ := r.Get(table.CidrToRadixkey(key))
-					if b == nil {
-						r.Insert(table.CidrToRadixkey(key), []*table.Path{p})
-					} else {
-						l := b.([]*table.Path)
-						l = append(l, p)
-					}
-				}
-			}
-			r.Walk(func(s string, v interface{}) bool {
-				dsts[s] = v.([]*table.Path)
-				return false
-			})
-		default:
-			for _, p := range paths {
-				if d, y := dsts[p.GetNlri().String()]; y {
-					d = append(d, p)
-				} else {
-					dsts[p.GetNlri().String()] = []*table.Path{p}
-				}
-			}
-		}
+		rib, err = adjRib.Select(family, false, table.TableSelectOption{ID: id, LookupPrefixes: prefixes})
 	}
-	return id, dsts, err
+	return
 }
 
 func (s *BgpServer) GetServer() (c *config.Global) {
@@ -1675,12 +1533,20 @@ func (server *BgpServer) addNeighbor(c *config.Neighbor) error {
 
 	addr := c.Config.NeighborAddress
 	if _, y := server.neighborMap[addr]; y {
-		return fmt.Errorf("Can't overwrite the exising peer: %s", addr)
+		return fmt.Errorf("Can't overwrite the existing peer: %s", addr)
 	}
 
 	if server.bgpConfig.Global.Config.Port > 0 {
 		for _, l := range server.Listeners(addr) {
-			SetTcpMD5SigSockopts(l, addr, c.Config.AuthPassword)
+			if err := SetTcpMD5SigSockopts(l, addr, c.Config.AuthPassword); err != nil {
+				log.WithFields(log.Fields{
+					"Topic": "Peer",
+				}).Debugf("failed to set md5 %s %s", addr, err)
+			} else {
+				log.WithFields(log.Fields{
+					"Topic": "Peer",
+				}).Debugf("successfully set md5 %s", addr)
+			}
 		}
 	}
 	log.WithFields(log.Fields{
@@ -1688,7 +1554,7 @@ func (server *BgpServer) addNeighbor(c *config.Neighbor) error {
 	}).Infof("Add a peer configuration for:%s", addr)
 
 	peer := NewPeer(&server.bgpConfig.Global, c, server.globalRib, server.policy)
-	server.setPolicyByConfig(peer.ID(), c.ApplyPolicy)
+	server.policy.Reset(nil, map[string]config.ApplyPolicy{peer.ID(): c.ApplyPolicy})
 	if peer.isRouteServerClient() {
 		pathList := make([]*table.Path, 0)
 		rfList := peer.configuredRFlist()
@@ -1714,11 +1580,7 @@ func (s *BgpServer) AddNeighbor(c *config.Neighbor) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
 		if err = s.active(); err != nil {
 			return
@@ -1730,6 +1592,13 @@ func (s *BgpServer) AddNeighbor(c *config.Neighbor) (err error) {
 
 func (server *BgpServer) deleteNeighbor(c *config.Neighbor, code, subcode uint8) error {
 	addr := c.Config.NeighborAddress
+	if intf := c.Config.NeighborInterface; intf != "" {
+		var err error
+		addr, err = config.GetIPv6LinkLocalNeighborAddress(intf)
+		if err != nil {
+			return err
+		}
+	}
 	n, y := server.neighborMap[addr]
 	if !y {
 		return fmt.Errorf("Can't delete a peer configuration for %s", addr)
@@ -1771,11 +1640,8 @@ func (s *BgpServer) DeleteNeighbor(c *config.Neighbor) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
+
 		err = s.deleteNeighbor(c, bgp.BGP_ERROR_CEASE, bgp.BGP_ERROR_SUB_PEER_DECONFIGURED)
 	}
 	return err
@@ -1786,11 +1652,7 @@ func (s *BgpServer) UpdateNeighbor(c *config.Neighbor) (policyUpdated bool, err 
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
 		addr := c.Config.NeighborAddress
 		peer, ok := s.neighborMap[addr]
@@ -1804,7 +1666,7 @@ func (s *BgpServer) UpdateNeighbor(c *config.Neighbor) (policyUpdated bool, err 
 				"Topic": "Peer",
 				"Key":   addr,
 			}).Info("Update ApplyPolicy")
-			s.setPolicyByConfig(peer.ID(), c.ApplyPolicy)
+			s.policy.Reset(nil, map[string]config.ApplyPolicy{peer.ID(): c.ApplyPolicy})
 			peer.fsm.pConf.ApplyPolicy = c.ApplyPolicy
 			policyUpdated = true
 		}
@@ -1979,42 +1841,11 @@ func (s *BgpServer) GetDefinedSet(typ table.DefinedType) (sets *config.DefinedSe
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		set, ok := s.policy.DefinedSetMap[typ]
-		if !ok {
-			err = fmt.Errorf("invalid defined-set type: %d", typ)
-			return
-		}
-		sets = &config.DefinedSets{
-			PrefixSets:   make([]config.PrefixSet, 0),
-			NeighborSets: make([]config.NeighborSet, 0),
-			BgpDefinedSets: config.BgpDefinedSets{
-				CommunitySets:    make([]config.CommunitySet, 0),
-				ExtCommunitySets: make([]config.ExtCommunitySet, 0),
-				AsPathSets:       make([]config.AsPathSet, 0),
-			},
-		}
-		for _, s := range set {
-			switch s.(type) {
-			case *table.PrefixSet:
-				sets.PrefixSets = append(sets.PrefixSets, *s.(*table.PrefixSet).ToConfig())
-			case *table.NeighborSet:
-				sets.NeighborSets = append(sets.NeighborSets, *s.(*table.NeighborSet).ToConfig())
-			case *table.CommunitySet:
-				sets.BgpDefinedSets.CommunitySets = append(sets.BgpDefinedSets.CommunitySets, *s.(*table.CommunitySet).ToConfig())
-			case *table.ExtCommunitySet:
-				sets.BgpDefinedSets.ExtCommunitySets = append(sets.BgpDefinedSets.ExtCommunitySets, *s.(*table.ExtCommunitySet).ToConfig())
-			case *table.AsPathSet:
-				sets.BgpDefinedSets.AsPathSets = append(sets.BgpDefinedSets.AsPathSets, *s.(*table.AsPathSet).ToConfig())
-			}
-		}
+		sets, err = s.policy.GetDefinedSet(typ)
 	}
-	return sets, nil
+	return sets, err
 }
 
 func (s *BgpServer) AddDefinedSet(a table.DefinedSet) (err error) {
@@ -2022,21 +1853,9 @@ func (s *BgpServer) AddDefinedSet(a table.DefinedSet) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		if m, ok := s.policy.DefinedSetMap[a.Type()]; !ok {
-			err = fmt.Errorf("invalid defined-set type: %d", a.Type())
-		} else {
-			if d, ok := m[a.Name()]; ok {
-				err = d.Append(a)
-			} else {
-				m[a.Name()] = a
-			}
-		}
+		err = s.policy.AddDefinedSet(a)
 	}
 	return err
 }
@@ -2046,30 +1865,9 @@ func (s *BgpServer) DeleteDefinedSet(a table.DefinedSet, all bool) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		if m, ok := s.policy.DefinedSetMap[a.Type()]; !ok {
-			err = fmt.Errorf("invalid defined-set type: %d", a.Type())
-		} else {
-			d, ok := m[a.Name()]
-			if !ok {
-				err = fmt.Errorf("not found defined-set: %s", a.Name())
-				return
-			}
-			if all {
-				if s.policy.InUse(d) {
-					err = fmt.Errorf("can't delete. defined-set %s is in use", a.Name())
-				} else {
-					delete(m, a.Name())
-				}
-			} else {
-				err = d.Remove(a)
-			}
-		}
+		err = s.policy.DeleteDefinedSet(a, all)
 	}
 	return err
 }
@@ -2079,21 +1877,9 @@ func (s *BgpServer) ReplaceDefinedSet(a table.DefinedSet) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		if m, ok := s.policy.DefinedSetMap[a.Type()]; !ok {
-			err = fmt.Errorf("invalid defined-set type: %d", a.Type())
-		} else {
-			if d, ok := m[a.Name()]; !ok {
-				err = fmt.Errorf("not found defined-set: %s", a.Name())
-			} else {
-				err = d.Replace(a)
-			}
-		}
+		err = s.policy.ReplaceDefinedSet(a)
 	}
 	return err
 }
@@ -2103,16 +1889,9 @@ func (s *BgpServer) GetStatement() (l []*config.Statement) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		l = make([]*config.Statement, 0, len(s.policy.StatementMap))
-		for _, st := range s.policy.StatementMap {
-			l = append(l, st.ToConfig())
-		}
+		l = s.policy.GetStatement()
 	}
 	return l
 }
@@ -2122,24 +1901,9 @@ func (s *BgpServer) AddStatement(st *table.Statement) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		for _, c := range st.Conditions {
-			if err = s.policy.ValidateCondition(c); err != nil {
-				return
-			}
-		}
-		m := s.policy.StatementMap
-		name := st.Name
-		if d, ok := m[name]; ok {
-			err = d.Add(st)
-		} else {
-			m[name] = st
-		}
+		err = s.policy.AddStatement(st)
 	}
 	return err
 }
@@ -2149,27 +1913,9 @@ func (s *BgpServer) DeleteStatement(st *table.Statement, all bool) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		m := s.policy.StatementMap
-		name := st.Name
-		if d, ok := m[name]; ok {
-			if all {
-				if s.policy.StatementInUse(d) {
-					err = fmt.Errorf("can't delete. statement %s is in use", name)
-				} else {
-					delete(m, name)
-				}
-			} else {
-				err = d.Remove(st)
-			}
-		} else {
-			err = fmt.Errorf("not found statement: %s", name)
-		}
+		err = s.policy.DeleteStatement(st, all)
 	}
 	return err
 }
@@ -2179,19 +1925,9 @@ func (s *BgpServer) ReplaceStatement(st *table.Statement) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		m := s.policy.StatementMap
-		name := st.Name
-		if d, ok := m[name]; ok {
-			err = d.Replace(st)
-		} else {
-			err = fmt.Errorf("not found statement: %s", name)
-		}
+		err = s.policy.ReplaceStatement(st)
 	}
 	return err
 }
@@ -2201,38 +1937,11 @@ func (s *BgpServer) GetPolicy() (l []*config.PolicyDefinition) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		l := make([]*config.PolicyDefinition, 0, len(s.policy.PolicyMap))
-		for _, p := range s.policy.PolicyMap {
-			l = append(l, p.ToConfig())
-		}
+		l = s.policy.GetAllPolicy()
 	}
 	return l
-}
-
-func (s *BgpServer) policyInUse(x *table.Policy) bool {
-	for _, peer := range s.neighborMap {
-		for _, dir := range []table.PolicyDirection{table.POLICY_DIRECTION_IN, table.POLICY_DIRECTION_EXPORT, table.POLICY_DIRECTION_EXPORT} {
-			for _, y := range s.policy.GetPolicy(peer.ID(), dir) {
-				if x.Name == y.Name {
-					return true
-				}
-			}
-		}
-	}
-	for _, dir := range []table.PolicyDirection{table.POLICY_DIRECTION_EXPORT, table.POLICY_DIRECTION_EXPORT} {
-		for _, y := range s.policy.GetPolicy(table.GLOBAL_RIB_NAME, dir) {
-			if x.Name == y.Name {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (s *BgpServer) AddPolicy(x *table.Policy, refer bool) (err error) {
@@ -2240,40 +1949,9 @@ func (s *BgpServer) AddPolicy(x *table.Policy, refer bool) (err error) {
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		for _, st := range x.Statements {
-			for _, c := range st.Conditions {
-				if err = s.policy.ValidateCondition(c); err != nil {
-					return
-				}
-			}
-		}
-
-		pMap := s.policy.PolicyMap
-		sMap := s.policy.StatementMap
-		name := x.Name
-		y, ok := pMap[name]
-		if refer {
-			err = x.FillUp(sMap)
-		} else {
-			for _, st := range x.Statements {
-				if _, ok := sMap[st.Name]; ok {
-					err = fmt.Errorf("statement %s already defined", st.Name)
-					return
-				}
-				sMap[st.Name] = st
-			}
-		}
-		if ok {
-			err = y.Add(x)
-		} else {
-			pMap[name] = x
-		}
+		err = s.policy.AddPolicy(x, refer)
 	}
 	return err
 }
@@ -2283,44 +1961,16 @@ func (s *BgpServer) DeletePolicy(x *table.Policy, all, preserve bool) (err error
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		pMap := s.policy.PolicyMap
-		sMap := s.policy.StatementMap
-		name := x.Name
-		y, ok := pMap[name]
-		if !ok {
-			err = fmt.Errorf("not found policy: %s", name)
-			return
+		l := make([]string, 0, len(s.neighborMap)+1)
+		for _, peer := range s.neighborMap {
+			l = append(l, peer.ID())
 		}
-		if all {
-			if s.policyInUse(y) {
-				err = fmt.Errorf("can't delete. policy %s is in use", name)
-				return
-			}
-			log.WithFields(log.Fields{
-				"Topic": "Policy",
-				"Key":   name,
-			}).Debug("delete policy")
-			delete(pMap, name)
-		} else {
-			err = y.Remove(x)
-		}
-		if err == nil && !preserve {
-			for _, st := range y.Statements {
-				if !s.policy.StatementInUse(st) {
-					log.WithFields(log.Fields{
-						"Topic": "Policy",
-						"Key":   st.Name,
-					}).Debug("delete unused statement")
-					delete(sMap, st.Name)
-				}
-			}
-		}
+		l = append(l, table.GLOBAL_RIB_NAME)
+
+		err = s.policy.DeletePolicy(x, all, preserve, l)
+
 	}
 	return err
 }
@@ -2330,54 +1980,9 @@ func (s *BgpServer) ReplacePolicy(x *table.Policy, refer, preserve bool) (err er
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
-		for _, st := range x.Statements {
-			for _, c := range st.Conditions {
-				if err = s.policy.ValidateCondition(c); err != nil {
-					return
-				}
-			}
-		}
-
-		pMap := s.policy.PolicyMap
-		sMap := s.policy.StatementMap
-		name := x.Name
-		y, ok := pMap[name]
-		if !ok {
-			err = fmt.Errorf("not found policy: %s", name)
-			return
-		}
-		if refer {
-			if err = x.FillUp(sMap); err != nil {
-				return
-			}
-		} else {
-			for _, st := range x.Statements {
-				if _, ok := sMap[st.Name]; ok {
-					err = fmt.Errorf("statement %s already defined", st.Name)
-					return
-				}
-				sMap[st.Name] = st
-			}
-		}
-
-		err = y.Replace(x)
-		if err == nil && !preserve {
-			for _, st := range y.Statements {
-				if !s.policy.StatementInUse(st) {
-					log.WithFields(log.Fields{
-						"Topic": "Policy",
-						"Key":   st.Name,
-					}).Debug("delete unused statement")
-					delete(sMap, st.Name)
-				}
-			}
-		}
+		err = s.policy.ReplacePolicy(x, refer, preserve)
 	}
 	return err
 }
@@ -2406,24 +2011,14 @@ func (s *BgpServer) GetPolicyAssignment(name string, dir table.PolicyDirection) 
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
 		var id string
 		id, err = s.toPolicyInfo(name, dir)
 		if err != nil {
 			rt = table.ROUTE_TYPE_NONE
 		} else {
-			rt = s.policy.GetDefaultPolicy(id, dir)
-
-			ps := s.policy.GetPolicy(id, dir)
-			l = make([]*config.PolicyDefinition, 0, len(ps))
-			for _, p := range ps {
-				l = append(l, p.ToConfig())
-			}
+			rt, l, err = s.policy.GetPolicyAssignment(id, dir)
 		}
 	}
 	return rt, l, err
@@ -2434,51 +2029,14 @@ func (s *BgpServer) AddPolicyAssignment(name string, dir table.PolicyDirection, 
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
 		var id string
 		id, err = s.toPolicyInfo(name, dir)
 		if err != nil {
 			return
 		}
-
-		ps := make([]*table.Policy, 0, len(policies))
-		seen := make(map[string]bool)
-		for _, x := range policies {
-			p, ok := s.policy.PolicyMap[x.Name]
-			if !ok {
-				err = fmt.Errorf("not found policy %s", x.Name)
-				return
-			}
-			if seen[x.Name] {
-				err = fmt.Errorf("duplicated policy %s", x.Name)
-				return
-			}
-			seen[x.Name] = true
-			ps = append(ps, p)
-		}
-		cur := s.policy.GetPolicy(id, dir)
-		if cur == nil {
-			err = s.policy.SetPolicy(id, dir, ps)
-		} else {
-			seen = make(map[string]bool)
-			ps = append(cur, ps...)
-			for _, x := range ps {
-				if seen[x.Name] {
-					err = fmt.Errorf("duplicated policy %s", x.Name)
-					return
-				}
-				seen[x.Name] = true
-			}
-			err = s.policy.SetPolicy(id, dir, ps)
-		}
-		if err == nil && def != table.ROUTE_TYPE_NONE {
-			err = s.policy.SetDefaultPolicy(id, dir, def)
-		}
+		err = s.policy.AddPolicyAssignment(id, dir, policies, def)
 	}
 	return err
 }
@@ -2488,57 +2046,14 @@ func (s *BgpServer) DeletePolicyAssignment(name string, dir table.PolicyDirectio
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
 		var id string
 		id, err = s.toPolicyInfo(name, dir)
 		if err != nil {
 			return
 		}
-
-		ps := make([]*table.Policy, 0, len(policies))
-		seen := make(map[string]bool)
-		for _, x := range policies {
-			p, ok := s.policy.PolicyMap[x.Name]
-			if !ok {
-				err = fmt.Errorf("not found policy %s", x.Name)
-				return
-			}
-			if seen[x.Name] {
-				err = fmt.Errorf("duplicated policy %s", x.Name)
-				return
-			}
-			seen[x.Name] = true
-			ps = append(ps, p)
-		}
-		cur := s.policy.GetPolicy(id, dir)
-
-		if all {
-			err = s.policy.SetPolicy(id, dir, nil)
-			if err != nil {
-				return
-			}
-			err = s.policy.SetDefaultPolicy(id, dir, table.ROUTE_TYPE_NONE)
-		} else {
-			n := make([]*table.Policy, 0, len(cur)-len(ps))
-			for _, y := range cur {
-				found := false
-				for _, x := range ps {
-					if x.Name == y.Name {
-						found = true
-						break
-					}
-				}
-				if !found {
-					n = append(n, y)
-				}
-			}
-			err = s.policy.SetPolicy(id, dir, n)
-		}
+		err = s.policy.DeletePolicyAssignment(id, dir, policies, all)
 	}
 	return err
 }
@@ -2548,76 +2063,38 @@ func (s *BgpServer) ReplacePolicyAssignment(name string, dir table.PolicyDirecti
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
-		policyMutex.Lock()
-		defer func() {
-			policyMutex.Unlock()
-			close(ch)
-		}()
+		defer close(ch)
 
 		var id string
 		id, err = s.toPolicyInfo(name, dir)
 		if err != nil {
 			return
 		}
-
-		ps := make([]*table.Policy, 0, len(policies))
-		seen := make(map[string]bool)
-		for _, x := range policies {
-			p, ok := s.policy.PolicyMap[x.Name]
-			if !ok {
-				err = fmt.Errorf("not found policy %s", x.Name)
-				return
-			}
-			if seen[x.Name] {
-				err = fmt.Errorf("duplicated policy %s", x.Name)
-				return
-			}
-			seen[x.Name] = true
-			ps = append(ps, p)
-		}
-		s.policy.GetPolicy(id, dir)
-		err = s.policy.SetPolicy(id, dir, ps)
-		if err == nil && def != table.ROUTE_TYPE_NONE {
-			err = s.policy.SetDefaultPolicy(id, dir, def)
-		}
+		err = s.policy.ReplacePolicyAssignment(id, dir, policies, def)
 	}
 	return err
 }
 
-func (s *BgpServer) EnableMrt(c *config.Mrt) (err error) {
+func (s *BgpServer) EnableMrt(c *config.MrtConfig) (err error) {
 	ch := make(chan struct{})
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
 		defer close(ch)
 
-		if s.mrt != nil {
-			err = fmt.Errorf("already enabled")
-		} else {
-			interval := c.Interval
-
-			if interval != 0 && interval < 30 {
-				log.Info("minimum mrt dump interval is 30 seconds")
-				interval = 30
-			}
-			s.mrt, err = newMrtWriter(s, c.DumpType.ToInt(), c.FileName, interval)
-		}
+		err = s.mrtManager.enable(c)
 	}
 	return err
 }
 
-func (s *BgpServer) DisableMrt() (err error) {
+func (s *BgpServer) DisableMrt(c *config.MrtConfig) (err error) {
 	ch := make(chan struct{})
 	defer func() { <-ch }()
 
 	s.mgmtCh <- func() {
 		defer close(ch)
 
-		if s.mrt != nil {
-			s.mrt.Stop()
-		} else {
-			err = fmt.Errorf("not enabled")
-		}
+		err = s.mrtManager.disable(c)
 	}
 	return err
 }
@@ -2750,6 +2227,7 @@ const (
 	WATCH_EVENT_TYPE_PRE_UPDATE  WatchEventType = "preupdate"
 	WATCH_EVENT_TYPE_POST_UPDATE WatchEventType = "postupdate"
 	WATCH_EVENT_TYPE_PEER_STATE  WatchEventType = "peerstate"
+	WATCH_EVENT_TYPE_TABLE       WatchEventType = "table"
 )
 
 type WatchEvent interface {
@@ -2788,6 +2266,12 @@ type WatchEventAdjIn struct {
 	PathList []*table.Path
 }
 
+type WatchEventTable struct {
+	RouterId string
+	PathList map[string][]*table.Path
+	Neighbor []*config.Neighbor
+}
+
 type WatchEventBestPath struct {
 	PathList      []*table.Path
 	MultiPathList [][]*table.Path
@@ -2801,6 +2285,7 @@ type watchOptions struct {
 	initUpdate     bool
 	initPostUpdate bool
 	initPeerState  bool
+	tableName      string
 }
 
 type WatchOption func(*watchOptions)
@@ -2838,6 +2323,12 @@ func WatchPeerState(current bool) WatchOption {
 	}
 }
 
+func WatchTableName(name string) WatchOption {
+	return func(o *watchOptions) {
+		o.tableName = name
+	}
+}
+
 type Watcher struct {
 	opts   watchOptions
 	realCh chan WatchEvent
@@ -2858,15 +2349,46 @@ func (w *Watcher) Generate(t WatchEventType) (err error) {
 
 		switch t {
 		case WATCH_EVENT_TYPE_PRE_UPDATE:
+			pathList := make([]*table.Path, 0)
+			for _, peer := range w.s.neighborMap {
+				pathList = append(pathList, peer.adjRibIn.PathList(peer.configuredRFlist(), false)...)
+			}
+			w.notify(&WatchEventAdjIn{PathList: clonePathList(pathList)})
+		case WATCH_EVENT_TYPE_TABLE:
+			id := table.GLOBAL_RIB_NAME
+			if len(w.opts.tableName) > 0 {
+				peer, ok := w.s.neighborMap[w.opts.tableName]
+				if !ok {
+					err = fmt.Errorf("Neighbor that has %v doesn't exist.", w.opts.tableName)
+					break
+				}
+				if !peer.isRouteServerClient() {
+					err = fmt.Errorf("Neighbor %v doesn't have local rib", w.opts.tableName)
+					return
+				}
+				id = peer.ID()
+			}
+
+			pathList := func() map[string][]*table.Path {
+				pathList := make(map[string][]*table.Path)
+				for _, t := range w.s.globalRib.Tables {
+					for _, dst := range t.GetSortedDestinations() {
+						if paths := dst.GetKnownPathList(id); len(paths) > 0 {
+							pathList[dst.GetNlri().String()] = clonePathList(paths)
+						}
+					}
+				}
+				return pathList
+			}()
+			l := make([]*config.Neighbor, 0, len(w.s.neighborMap))
+			for _, peer := range w.s.neighborMap {
+				l = append(l, peer.ToConfig())
+			}
+			w.notify(&WatchEventTable{PathList: pathList, Neighbor: l})
 		default:
 			err = fmt.Errorf("unsupported type ", t)
 			return
 		}
-		pathList := make([]*table.Path, 0)
-		for _, peer := range w.s.neighborMap {
-			pathList = append(pathList, peer.adjRibIn.PathList(peer.configuredRFlist(), false)...)
-		}
-		w.notify(&WatchEventAdjIn{PathList: clonePathList(pathList)})
 	}
 	return err
 }

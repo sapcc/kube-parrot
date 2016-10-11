@@ -35,8 +35,15 @@ router-id = "10.0.255.254"
     neighbor-address = "10.0.255.1"
 
 [[mrt-dump]]
+  [mrt-dump.config]
     dump-type = "updates"
     file-name = "/tmp/updates.dump"
+
+[[mrt-dump]]
+  [mrt-dump.config]
+    dump-type = "table"
+    file-name = "/tmp/table.dump"
+    dump-interval = 60
 ```
 
 Also gobgpd supports log rotation; a new dump file is created
@@ -57,9 +64,78 @@ router-id = "10.0.255.254"
     neighbor-address = "10.0.255.1"
 
 [[mrt-dump]]
+  [mrt-dump.config]
     dump-type = "updates"
     file-name = "/tmp/log/20060102.1504.dump"
-    interval = 180
+    rotation-interval = 180
 ```
 
+## <a name="section1"> Dump the RIB in MRT TABLE_DUMPv2 format
 
+### <a name="section1.1"> Configuration
+
+With the following configuration, gobgpd continuously dumps routes in
+the global rib to `/tmp/table.dump` file in the TABLE_DUMPv2 format
+every 60 seconds.
+
+
+```toml
+[global.config]
+as = 64512
+router-id = "10.0.255.254"
+
+[[neighbors]]
+  [neighbors.config]
+    peer-as = 65001
+    neighbor-address = "10.0.255.1"
+
+[[mrt-dump]]
+  [mrt-dump.config]
+    dump-type = "table"
+    file-name = "/tmp/table.dump"
+    dump-interval = 60
+```
+
+With a route server configuration, gobgpd can dump routes in each
+peer's RIB.
+
+
+```toml
+[global.config]
+  as = 64512
+  router-id = "192.168.255.1"
+
+[[neighbors]]
+  [neighbors.config]
+    neighbor-address = "10.0.255.1"
+    peer-as = 65001
+    auth-password = "hoge1"
+  [neighbors.transport.config]
+    passive-mode = true
+  [neighbors.route-server.config]
+    route-server-client = true
+
+[[neighbors]]
+  [neighbors.config]
+    neighbor-address = "10.0.255.2"
+    peer-as = 65002
+    auth-password = "hoge2"
+  [neighbors.transport.config]
+    passive-mode = true
+  [neighbors.route-server.config]
+    route-server-client = true
+
+[[mrt-dump]]
+  [mrt-dump.config]
+    dump-type = "table"
+    file-name = "/tmp/table-1.dump"
+    table-name = "10.0.255.1"
+    dump-interval = 60
+
+[[mrt-dump]]
+  [mrt-dump.config]
+    dump-type = "table"
+    file-name = "/tmp/table-2.dump"
+    table-name = "10.0.255.2"
+    dump-interval = 60
+```

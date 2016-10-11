@@ -212,7 +212,7 @@ func main() {
 					log.Fatalf("failed to set global config: %s", err)
 				}
 				if newConfig.Zebra.Config.Enabled {
-					if err := bgpServer.StartZebraClient(&newConfig.Zebra); err != nil {
+					if err := bgpServer.StartZebraClient(&newConfig.Zebra.Config); err != nil {
 						log.Fatalf("failed to set zebra config: %s", err)
 					}
 				}
@@ -232,10 +232,10 @@ func main() {
 					}
 				}
 				for _, c := range newConfig.MrtDump {
-					if len(c.FileName) == 0 {
+					if len(c.Config.FileName) == 0 {
 						continue
 					}
-					if err := bgpServer.EnableMrt(&c); err != nil {
+					if err := bgpServer.EnableMrt(&c.Config); err != nil {
 						log.Fatalf("failed to set mrt config: %s", err)
 					}
 				}

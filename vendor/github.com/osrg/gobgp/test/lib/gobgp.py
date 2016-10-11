@@ -20,6 +20,8 @@ import yaml
 from itertools import chain
 from threading import Thread
 import socket
+import subprocess
+import os
 
 def extract_path_attribute(path, typ):
     for a in path['attrs']:
@@ -33,7 +35,8 @@ class GoBGPContainer(BGPContainer):
     QUAGGA_VOLUME = '/etc/quagga'
 
     def __init__(self, name, asn, router_id, ctn_image_name='osrg/gobgp',
-                 log_level='debug', zebra=False, config_format='toml'):
+                 log_level='debug', zebra=False, config_format='toml',
+                 zapi_version=2):
         super(GoBGPContainer, self).__init__(name, asn, router_id,
                                              ctn_image_name)
         self.shared_volumes.append((self.config_dir, self.SHARED_VOLUME))
@@ -44,6 +47,7 @@ class GoBGPContainer(BGPContainer):
         self.bgp_set = None
         self.default_policy = None
         self.zebra = zebra
+        self.zapi_version = zapi_version
         self.config_format = config_format
 
     def _start_gobgp(self, graceful_restart=False):
@@ -62,9 +66,12 @@ class GoBGPContainer(BGPContainer):
         self.local("pkill -INT gobgpd")
 
     def _start_zebra(self):
-        cmd = 'cp {0}/zebra.conf {1}/'.format(self.SHARED_VOLUME, self.QUAGGA_VOLUME)
-        self.local(cmd)
-        cmd = '/usr/lib/quagga/zebra -f {0}/zebra.conf'.format(self.QUAGGA_VOLUME)
+        if self.zapi_version == 2:
+            cmd = 'cp {0}/zebra.conf {1}/'.format(self.SHARED_VOLUME, self.QUAGGA_VOLUME)
+            self.local(cmd)
+            cmd = '/usr/lib/quagga/zebra -f {0}/zebra.conf'.format(self.QUAGGA_VOLUME)
+        else:
+            cmd = 'zebra -u root -g root -f {0}/zebra.conf'.format(self.SHARED_VOLUME)
         self.local(cmd, detach=True)
 
     def run(self):
@@ -119,43 +126,46 @@ class GoBGPContainer(BGPContainer):
         cmd = 'gobgp -j neighbor {0} local {1} -a {2}'.format(peer_addr, prefix, rf)
         output = self.local(cmd, capture=True)
         ret = json.loads(output)
-        for d in ret:
-            for p in d["paths"]:
+        dsts = []
+        for k, v in ret.iteritems():
+            for p in v:
                 p["nexthop"] = self._get_nexthop(p)
                 p["aspath"] = self._get_as_path(p)
                 p["local-pref"] = self._get_local_pref(p)
-        return ret
+                p["prefix"] = k
+            dsts.append({'paths': v, 'prefix': k})
+        return dsts
 
     def get_global_rib(self, prefix='', rf='ipv4'):
         cmd = 'gobgp -j global rib {0} -a {1}'.format(prefix, rf)
         output = self.local(cmd, capture=True)
         ret = json.loads(output)
-        for d in ret:
-            for p in d["paths"]:
+        dsts = []
+        for k, v in ret.iteritems():
+            for p in v:
                 p["nexthop"] = self._get_nexthop(p)
                 p["aspath"] = self._get_as_path(p)
                 p["local-pref"] = self._get_local_pref(p)
-        return ret
+                p["prefix"] = k
+            dsts.append({'paths': v, 'prefix': k})
+        return dsts
 
     def monitor_global_rib(self, queue, rf='ipv4'):
+        host = self.ip_addrs[0][1].split('/')[0]
+
+        if not os.path.exists('{0}/gobgp'.format(self.config_dir)):
+            self.local('cp /go/bin/gobgp {0}/'.format(self.SHARED_VOLUME))
+
+        args = '{0}/gobgp -u {1} -j monitor global rib -a {2}'.format(self.config_dir, host, rf).split(' ')
+
         def monitor():
-            it = self.local('gobgp -j monitor global rib -a {0}'.format(rf), stream=True)
-            buf = ''
-            try:
-                for line in it:
-                    if line == '\n':
-                        p = json.loads(buf)[0]
-                        p["nexthop"] = self._get_nexthop(p)
-                        p["aspath"] = self._get_as_path(p)
-                        p["local-pref"] = self._get_local_pref(p)
-                        queue.put(p)
-                        buf = ''
-                    else:
-                        buf += line
-            except socket.timeout:
-                #self.local('pkill -x gobgp')
-                queue.put('timeout')
-                return
+            process = subprocess.Popen(args, stdout=subprocess.PIPE)
+            for line in iter(process.stdout.readline, ''):
+                p = json.loads(line)[0]
+                p["nexthop"] = self._get_nexthop(p)
+                p["aspath"] = self._get_as_path(p)
+                p["local-pref"] = self._get_local_pref(p)
+                queue.put(p)
 
         t = Thread(target=monitor)
         t.daemon = True
@@ -169,7 +179,7 @@ class GoBGPContainer(BGPContainer):
                                                                 adj_type,
                                                                 prefix, rf)
         output = self.local(cmd, capture=True)
-        ret = [p["paths"][0] for p in json.loads(output)]
+        ret = [p[0] for p in json.loads(output).itervalues()]
         for p in ret:
             p["nexthop"] = self._get_nexthop(p)
             p["aspath"] = self._get_as_path(p)
@@ -346,7 +356,8 @@ class GoBGPContainer(BGPContainer):
 
         if self.zebra:
             config['zebra'] = {'config':{'enabled': True,
-                                         'redistribute-route-type-list':['connect']}}
+                                         'redistribute-route-type-list':['connect'],
+                                         'version': self.zapi_version}}
 
         with open('{0}/gobgpd.conf'.format(self.config_dir), 'w') as f:
             print colors.yellow('[{0}\'s new config]'.format(self.name))
@@ -365,7 +376,7 @@ class GoBGPContainer(BGPContainer):
         c = CmdBuffer()
         c << 'hostname zebra'
         c << 'password zebra'
-        c << 'log file {0}/zebra.log'.format(self.QUAGGA_VOLUME)
+        c << 'log file {0}/zebra.log'.format(self.SHARED_VOLUME)
         c << 'debug zebra packet'
         c << 'debug zebra kernel'
         c << 'debug zebra rib'

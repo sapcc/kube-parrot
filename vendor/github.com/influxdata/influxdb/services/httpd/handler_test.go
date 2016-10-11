@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -35,6 +37,44 @@ func TestHandler_Query(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, MustNewJSONRequest("GET", "/query?db=foo&q=SELECT+*+FROM+bar", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", w.Code)
+	} else if body := strings.TrimSpace(w.Body.String()); body != `{"results":[{"series":[{"name":"series0"}]},{"series":[{"name":"series1"}]}]}` {
+		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
+// Ensure the handler returns results from a query passed as a file.
+func TestHandler_Query_File(t *testing.T) {
+	h := NewHandler(false)
+	h.StatementExecutor.ExecuteStatementFn = func(stmt influxql.Statement, ctx influxql.ExecutionContext) error {
+		if stmt.String() != `SELECT * FROM bar` {
+			t.Fatalf("unexpected query: %s", stmt.String())
+		} else if ctx.Database != `foo` {
+			t.Fatalf("unexpected db: %s", ctx.Database)
+		}
+		ctx.Results <- &influxql.Result{StatementID: 1, Series: models.Rows([]*models.Row{{Name: "series0"}})}
+		ctx.Results <- &influxql.Result{StatementID: 2, Series: models.Rows([]*models.Row{{Name: "series1"}})}
+		return nil
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("q", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.WriteString(part, "SELECT * FROM bar")
+
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	r := MustNewJSONRequest("POST", "/query?db=foo", &body)
+	r.Header.Set("Content-Type", writer.FormDataContentType())
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("unexpected status: %d", w.Code)
 	} else if body := strings.TrimSpace(w.Body.String()); body != `{"results":[{"series":[{"name":"series0"}]},{"series":[{"name":"series1"}]}]}` {
@@ -153,13 +193,13 @@ func TestHandler_Query_Auth(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unexpected status: %d: %s", w.Code, w.Body.String())
-	} else if !strings.Contains(w.Body.String(), `{"error":"token is expired`) {
+	} else if !strings.Contains(w.Body.String(), `{"error":"Token is expired`) {
 		t.Fatalf("unexpected body: %s", w.Body.String())
 	}
 
 	// Test handler with JWT token that has no expiration set.
 	token, _ := MustJWTToken("user1", h.Config.SharedSecret, false)
-	delete(token.Claims, "exp")
+	delete(token.Claims.(jwt.MapClaims), "exp")
 	signedToken, err := token.SignedString([]byte(h.Config.SharedSecret))
 	if err != nil {
 		t.Fatal(err)
@@ -247,6 +287,41 @@ func TestHandler_Query_Chunked(t *testing.T) {
 {"results":[{"series":[{"name":"series1"}]}]}
 ` {
 		t.Fatalf("unexpected body: %s", w.Body.String())
+	}
+}
+
+// Ensure the handler can accept an async query.
+func TestHandler_Query_Async(t *testing.T) {
+	done := make(chan struct{})
+	h := NewHandler(false)
+	h.StatementExecutor.ExecuteStatementFn = func(stmt influxql.Statement, ctx influxql.ExecutionContext) error {
+		if stmt.String() != `SELECT * FROM bar` {
+			t.Fatalf("unexpected query: %s", stmt.String())
+		} else if ctx.Database != `foo` {
+			t.Fatalf("unexpected db: %s", ctx.Database)
+		}
+		ctx.Results <- &influxql.Result{StatementID: 1, Series: models.Rows([]*models.Row{{Name: "series0"}})}
+		ctx.Results <- &influxql.Result{StatementID: 2, Series: models.Rows([]*models.Row{{Name: "series1"}})}
+		close(done)
+		return nil
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, MustNewJSONRequest("GET", "/query?db=foo&q=SELECT+*+FROM+bar&async=true", nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("unexpected status: %d", w.Code)
+	} else if body := strings.TrimSpace(w.Body.String()); body != `` {
+		t.Fatalf("unexpected body: %s", body)
+	}
+
+	// Wait to make sure the async query runs and completes.
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		t.Fatal("timeout while waiting for async query to complete")
+	case <-done:
 	}
 }
 
@@ -362,6 +437,73 @@ func TestHandler_Query_ErrResult(t *testing.T) {
 		t.Fatalf("unexpected status: %d", w.Code)
 	} else if body := strings.TrimSpace(w.Body.String()); body != `{"results":[{"error":"measurement not found"}]}` {
 		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
+// Ensure that closing the HTTP connection causes the query to be interrupted.
+func TestHandler_Query_CloseNotify(t *testing.T) {
+	// Avoid leaking a goroutine when this fails.
+	done := make(chan struct{})
+	defer close(done)
+
+	interrupted := make(chan struct{})
+	h := NewHandler(false)
+	h.StatementExecutor.ExecuteStatementFn = func(stmt influxql.Statement, ctx influxql.ExecutionContext) error {
+		select {
+		case <-ctx.InterruptCh:
+		case <-done:
+		}
+		close(interrupted)
+		return nil
+	}
+
+	s := httptest.NewServer(h)
+	defer s.Close()
+
+	// Parse the URL and generate a query request.
+	u, err := url.Parse(s.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/query"
+
+	values := url.Values{}
+	values.Set("q", "SELECT * FROM cpu")
+	values.Set("db", "db0")
+	values.Set("rp", "rp0")
+	values.Set("chunked", "true")
+	u.RawQuery = values.Encode()
+
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Perform the request and retrieve the response.
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Validate that the interrupted channel has NOT been closed yet.
+	timer := time.NewTimer(100 * time.Millisecond)
+	select {
+	case <-interrupted:
+		timer.Stop()
+		t.Fatal("query interrupted unexpectedly")
+	case <-timer.C:
+	}
+
+	// Close the response body which should abort the query in the handler.
+	resp.Body.Close()
+
+	// The query should abort within 100 milliseconds.
+	timer.Reset(100 * time.Millisecond)
+	select {
+	case <-interrupted:
+		timer.Stop()
+	case <-timer.C:
+		t.Fatal("timeout while waiting for query to abort")
 	}
 }
 
@@ -543,7 +685,7 @@ func MustNewRequest(method, urlStr string, body io.Reader) *http.Request {
 // MustNewRequest returns a new HTTP request with the content type set. Panic on error.
 func MustNewJSONRequest(method, urlStr string, body io.Reader) *http.Request {
 	r := MustNewRequest(method, urlStr, body)
-	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Accept", "application/json")
 	return r
 }
 
@@ -565,11 +707,11 @@ func NewResultChan(results ...*influxql.Result) <-chan *influxql.Result {
 // MustJWTToken returns a new JWT token and signed string or panics trying.
 func MustJWTToken(username, secret string, expired bool) (*jwt.Token, string) {
 	token := jwt.New(jwt.GetSigningMethod("HS512"))
-	token.Claims["username"] = username
+	token.Claims.(jwt.MapClaims)["username"] = username
 	if expired {
-		token.Claims["exp"] = time.Now().Add(-time.Second).Unix()
+		token.Claims.(jwt.MapClaims)["exp"] = time.Now().Add(-time.Second).Unix()
 	} else {
-		token.Claims["exp"] = time.Now().Add(time.Minute * 10).Unix()
+		token.Claims.(jwt.MapClaims)["exp"] = time.Now().Add(time.Minute * 10).Unix()
 	}
 	signed, err := token.SignedString([]byte(secret))
 	if err != nil {

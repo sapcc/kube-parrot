@@ -22,6 +22,9 @@ type SelectOptions struct {
 	// An optional channel that, if closed, signals that the select should be
 	// interrupted.
 	InterruptCh <-chan struct{}
+
+	// Maximum number of concurrent series.
+	MaxSeriesN int
 }
 
 // Select executes stmt against ic and returns a list of iterators to stream from.
@@ -251,6 +254,14 @@ func buildExprIterator(expr Expr, ic IteratorCreator, opt IteratorOptions, selec
 				return nil, err
 			}
 			return NewIntervalIterator(input, opt), nil
+		case "sample":
+			input, err := buildExprIterator(expr.Args[0], ic, opt, selector)
+			if err != nil {
+				return nil, err
+			}
+			size := expr.Args[1].(*IntegerLiteral)
+
+			return newSampleIterator(input, opt, int(size.Val))
 		case "holt_winters", "holt_winters_with_fit":
 			input, err := buildExprIterator(expr.Args[0], ic, opt, selector)
 			if err != nil {
@@ -304,6 +315,12 @@ func buildExprIterator(expr Expr, ic IteratorCreator, opt IteratorOptions, selec
 				return newMovingAverageIterator(input, int(n.Val), opt)
 			}
 			panic(fmt.Sprintf("invalid series aggregate function: %s", expr.Name))
+		case "cumulative_sum":
+			input, err := buildExprIterator(expr.Args[0], ic, opt, selector)
+			if err != nil {
+				return nil, err
+			}
+			return newCumulativeSumIterator(input, opt)
 		default:
 			itr, err := func() (Iterator, error) {
 				switch expr.Name {
@@ -340,6 +357,12 @@ func buildExprIterator(expr Expr, ic IteratorCreator, opt IteratorOptions, selec
 						return nil, err
 					}
 					return newMedianIterator(input, opt)
+				case "mode":
+					input, err := buildExprIterator(expr.Args[0].(*VarRef), ic, opt, false)
+					if err != nil {
+						return nil, err
+					}
+					return NewModeIterator(input, opt)
 				case "stddev":
 					input, err := buildExprIterator(expr.Args[0].(*VarRef), ic, opt, false)
 					if err != nil {

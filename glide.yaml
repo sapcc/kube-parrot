@@ -2,21 +2,16 @@ package: github.com/sapcc/kube-parrot
 import:
 - package: github.com/golang/glog
 - package: github.com/osrg/gobgp
-  version: a46e8b6826fe95ff09278d75474faf7a14b5d8b1
+  version: ^1.12.0
   subpackages:
   - api
-  - gobgp/cmd
+  - config
   - packet/bgp
   - server
+  - table
 - package: github.com/spf13/pflag
-- package: k8s.io/kubernetes
+- package: k8s.io/client-go
   subpackages:
-  - pkg/api
-  - pkg/client/cache
-  - pkg/client/clientset_generated/internalclientset
-  - pkg/client/unversioned/clientcmd
-  - pkg/controller
-  - pkg/controller/framework
-  - pkg/runtime
-  - pkg/watch
-- package: github.com/vishvananda/netlink
+  - 1.4/kubernetes
+  - 1.4/pkg/api
+  - 1.4/tools/clientcmd

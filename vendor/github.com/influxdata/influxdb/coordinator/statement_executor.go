@@ -252,28 +252,33 @@ func (e *StatementExecutor) executeCreateDatabaseStatement(stmt *influxql.Create
 		return err
 	}
 
-	rpi := meta.NewRetentionPolicyInfo(stmt.RetentionPolicyName)
-	rpi.Duration = stmt.RetentionPolicyDuration
-	rpi.ReplicaN = stmt.RetentionPolicyReplication
-	rpi.ShardGroupDuration = stmt.RetentionPolicyShardGroupDuration
-	_, err := e.MetaClient.CreateDatabaseWithRetentionPolicy(stmt.Name, rpi)
+	spec := meta.RetentionPolicySpec{
+		Name:               stmt.RetentionPolicyName,
+		Duration:           stmt.RetentionPolicyDuration,
+		ReplicaN:           stmt.RetentionPolicyReplication,
+		ShardGroupDuration: stmt.RetentionPolicyShardGroupDuration,
+	}
+	_, err := e.MetaClient.CreateDatabaseWithRetentionPolicy(stmt.Name, &spec)
 	return err
 }
 
 func (e *StatementExecutor) executeCreateRetentionPolicyStatement(stmt *influxql.CreateRetentionPolicyStatement) error {
-	rpi := meta.NewRetentionPolicyInfo(stmt.Name)
-	rpi.Duration = stmt.Duration
-	rpi.ReplicaN = stmt.Replication
-	rpi.ShardGroupDuration = stmt.ShardGroupDuration
+	spec := meta.RetentionPolicySpec{
+		Name:               stmt.Name,
+		Duration:           &stmt.Duration,
+		ReplicaN:           &stmt.Replication,
+		ShardGroupDuration: stmt.ShardGroupDuration,
+	}
 
 	// Create new retention policy.
-	if _, err := e.MetaClient.CreateRetentionPolicy(stmt.Database, rpi); err != nil {
+	rp, err := e.MetaClient.CreateRetentionPolicy(stmt.Database, &spec)
+	if err != nil {
 		return err
 	}
 
 	// If requested, set new policy as the default.
 	if stmt.Default {
-		if err := e.MetaClient.SetDefaultRetentionPolicy(stmt.Database, stmt.Name); err != nil {
+		if err := e.MetaClient.SetDefaultRetentionPolicy(stmt.Database, rp.Name); err != nil {
 			return err
 		}
 	}
@@ -412,12 +417,6 @@ func (e *StatementExecutor) executeSelectStatement(stmt *influxql.SelectStatemen
 	em.OmitTime = stmt.OmitTime
 	defer em.Close()
 
-	// Calculate initial stats across all iterators.
-	stats := influxql.Iterators(itrs).Stats()
-	if e.MaxSelectSeriesN > 0 && stats.SeriesN > e.MaxSelectSeriesN {
-		return fmt.Errorf("max select series count exceeded: %d series", stats.SeriesN)
-	}
-
 	// Emit rows to the results channel.
 	var writeN int64
 	var emitted bool
@@ -505,6 +504,7 @@ func (e *StatementExecutor) createIterators(stmt *influxql.SelectStatement, ctx 
 	opt := influxql.SelectOptions{
 		InterruptCh: ctx.InterruptCh,
 		NodeID:      ctx.ExecutionOptions.NodeID,
+		MaxSeriesN:  e.MaxSelectSeriesN,
 	}
 
 	// Replace instances of "now()" with the current time, and check the resultant times.
@@ -533,7 +533,7 @@ func (e *StatementExecutor) createIterators(stmt *influxql.SelectStatement, ctx 
 		}
 	}
 	if opt.MinTime.IsZero() {
-		opt.MinTime = time.Unix(0, 0)
+		opt.MinTime = time.Unix(0, influxql.MinTime).UTC()
 	}
 
 	// Convert DISTINCT into a call.
@@ -672,11 +672,11 @@ func (e *StatementExecutor) executeShowGrantsForUserStatement(q *influxql.ShowGr
 }
 
 func (e *StatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMeasurementsStatement, ctx *influxql.ExecutionContext) error {
-	if ctx.Database == "" {
+	if q.Database == "" {
 		return ErrDatabaseNameRequired
 	}
 
-	measurements, err := e.TSDBStore.Measurements(ctx.Database, q.Condition)
+	measurements, err := e.TSDBStore.Measurements(q.Database, q.Condition)
 	if err != nil || len(measurements) == 0 {
 		ctx.Results <- &influxql.Result{
 			StatementID: ctx.StatementID,
@@ -723,6 +723,10 @@ func (e *StatementExecutor) executeShowMeasurementsStatement(q *influxql.ShowMea
 }
 
 func (e *StatementExecutor) executeShowRetentionPoliciesStatement(q *influxql.ShowRetentionPoliciesStatement) (models.Rows, error) {
+	if q.Database == "" {
+		return nil, ErrDatabaseNameRequired
+	}
+
 	di := e.MetaClient.Database(q.Database)
 	if di == nil {
 		return nil, influxdb.ErrDatabaseNotFound(q.Database)
@@ -1049,7 +1053,7 @@ func convertRowToPoints(measurementName string, row *models.Row) ([]models.Point
 			}
 		}
 
-		p, err := models.NewPoint(measurementName, row.Tags, vals, v[timeIndex].(time.Time))
+		p, err := models.NewPoint(measurementName, models.NewTags(row.Tags), vals, v[timeIndex].(time.Time))
 		if err != nil {
 			// Drop points that can't be stored
 			continue
@@ -1068,6 +1072,14 @@ func (e *StatementExecutor) NormalizeStatement(stmt influxql.Statement, defaultD
 			return
 		}
 		switch node := node.(type) {
+		case *influxql.ShowRetentionPoliciesStatement:
+			if node.Database == "" {
+				node.Database = defaultDatabase
+			}
+		case *influxql.ShowMeasurementsStatement:
+			if node.Database == "" {
+				node.Database = defaultDatabase
+			}
 		case *influxql.Measurement:
 			err = e.normalizeMeasurement(node, defaultDatabase)
 		}

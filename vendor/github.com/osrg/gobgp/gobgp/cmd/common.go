@@ -138,109 +138,6 @@ func cidr2prefix(cidr string) string {
 	return buffer.String()[:ones]
 }
 
-type Destination struct {
-	Prefix string  `json:"prefix"`
-	Paths  []*Path `json:"paths"`
-}
-
-func ApiStruct2Destination(dst *gobgpapi.Destination) (*Destination, error) {
-	paths := make([]*Path, 0, len(dst.Paths))
-	for _, p := range dst.Paths {
-		ps, err := ApiStruct2Path(p)
-		if err != nil {
-			return nil, err
-		}
-		paths = append(paths, ps...)
-	}
-	return &Destination{
-		Prefix: dst.Prefix,
-		Paths:  paths,
-	}, nil
-
-}
-
-type Path struct {
-	Nlri       bgp.AddrPrefixInterface      `json:"nlri"`
-	PathAttrs  []bgp.PathAttributeInterface `json:"attrs"`
-	Age        int64                        `json:"age"`
-	Best       bool                         `json:"best"`
-	IsWithdraw bool                         `json:"isWithdraw"`
-	Validation int32                        `json:"validation"`
-	Filtered   bool                         `json:"filtered"`
-	SourceId   string                       `json:"source-id"`
-	NeighborIp string                       `json:"neighbor-ip"`
-	Stale      bool                         `json:"stale"`
-}
-
-func ApiStruct2Path(p *gobgpapi.Path) ([]*Path, error) {
-	nlris := make([]bgp.AddrPrefixInterface, 0, 1)
-	if len(p.Nlri) == 0 {
-		return nil, fmt.Errorf("path doesn't have nlri")
-	}
-	afi, safi := bgp.RouteFamilyToAfiSafi(bgp.RouteFamily(p.Family))
-	nlri, err := bgp.NewPrefixFromRouteFamily(afi, safi)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := nlri.DecodeFromBytes(p.Nlri); err != nil {
-		return nil, err
-	}
-	nlris = append(nlris, nlri)
-
-	pattr := make([]bgp.PathAttributeInterface, 0, len(p.Pattrs))
-	for _, attr := range p.Pattrs {
-		p, err := bgp.GetPathAttribute(attr)
-		if err != nil {
-			return nil, err
-		}
-
-		err = p.DecodeFromBytes(attr)
-		if err != nil {
-			return nil, err
-		}
-		pattr = append(pattr, p)
-	}
-
-	paths := make([]*Path, 0, len(nlris))
-	for _, nlri := range nlris {
-		paths = append(paths, &Path{
-			Nlri:       nlri,
-			PathAttrs:  pattr,
-			Age:        p.Age,
-			Best:       p.Best,
-			IsWithdraw: p.IsWithdraw,
-			Validation: p.Validation,
-			SourceId:   p.SourceId,
-			NeighborIp: p.NeighborIp,
-			Filtered:   p.Filtered,
-			Stale:      p.Stale,
-		})
-	}
-	return paths, nil
-}
-
-type paths []*Path
-
-func (p paths) Len() int {
-	return len(p)
-}
-
-func (p paths) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
-}
-
-func (p paths) Less(i, j int) bool {
-	if p[i].Nlri.String() == p[j].Nlri.String() {
-		if p[i].Best {
-			return true
-		}
-	}
-	strings := sort.StringSlice{cidr2prefix(p[i].Nlri.String()),
-		cidr2prefix(p[j].Nlri.String())}
-	return strings.Less(0, 1)
-}
-
 func extractReserved(args, keys []string) map[string][]string {
 	m := make(map[string][]string, len(keys))
 	var k string
@@ -256,8 +153,6 @@ func extractReserved(args, keys []string) map[string][]string {
 		if isReserved(arg) {
 			k = arg
 			m[k] = make([]string, 0, 1)
-		} else if k == "" {
-			m[k] = []string{arg}
 		} else {
 			m[k] = append(m[k], arg)
 		}
@@ -276,6 +171,8 @@ type PeerConf struct {
 	KeepaliveInterval uint32                             `json:"keepalive_interval,omitempty"`
 	PrefixLimits      []*gobgpapi.PrefixLimit            `json:"prefix_limits,omitempty"`
 	LocalIp           string                             `json:"local_ip,omitempty"`
+	Interface         string                             `json:"interface,omitempty"`
+	Description       string                             `json:"description,omitempty"`
 }
 
 type Peer struct {
@@ -308,6 +205,8 @@ func ApiStruct2Peer(p *gobgpapi.Peer) *Peer {
 		LocalCap:     localCaps,
 		PrefixLimits: p.Conf.PrefixLimits,
 		LocalIp:      localIp.String(),
+		Interface:    p.Conf.NeighborInterface,
+		Description:  p.Conf.Description,
 	}
 	return &Peer{
 		Conf:           conf,

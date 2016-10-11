@@ -480,3 +480,61 @@ func Test_FlowSpecNlriVPN(t *testing.T) {
 		t.Log(bytes.Equal(buf1, buf2))
 	}
 }
+
+func Test_EVPNIPPrefixRoute(t *testing.T) {
+	assert := assert.New(t)
+	rd, _ := ParseRouteDistinguisher("100:100")
+	r := &EVPNIPPrefixRoute{
+		RD: rd,
+		ESI: EthernetSegmentIdentifier{
+			Type:  ESI_ARBITRARY,
+			Value: make([]byte, 9),
+		},
+		ETag:           10,
+		IPPrefixLength: 24,
+		IPPrefix:       net.IP{10, 10, 10, 0},
+		GWIPAddress:    net.IP{10, 10, 10, 10},
+		Label:          1000,
+	}
+	n1 := NewEVPNNLRI(EVPN_IP_PREFIX, 0, r)
+	buf1, err := n1.Serialize()
+	assert.Nil(err)
+	n2, err := NewPrefixFromRouteFamily(RouteFamilyToAfiSafi(RF_EVPN))
+	assert.Nil(err)
+	err = n2.DecodeFromBytes(buf1)
+	assert.Nil(err)
+	buf2, _ := n2.Serialize()
+	t.Log(n1.RouteTypeData.(*EVPNIPPrefixRoute).ESI.Value, n2.(*EVPNNLRI).RouteTypeData.(*EVPNIPPrefixRoute).ESI.Value)
+	t.Log(reflect.DeepEqual(n1.RouteTypeData.(*EVPNIPPrefixRoute).ESI.Value, n2.(*EVPNNLRI).RouteTypeData.(*EVPNIPPrefixRoute).ESI.Value))
+	if reflect.DeepEqual(n1, n2) {
+		t.Log("OK")
+	} else {
+		t.Error("Something wrong")
+		t.Error(len(buf1), n1, buf1)
+		t.Error(len(buf2), n2, buf2)
+		t.Log(bytes.Equal(buf1, buf2))
+	}
+
+}
+
+func Test_CompareFlowSpecNLRI(t *testing.T) {
+	assert := assert.New(t)
+	cmp, err := ParseFlowSpecComponents(RF_FS_IPv4_UC, "destination 10.0.0.2/32 source 10.0.0.1/32 destination-port =3128 protocol tcp")
+	assert.Nil(err)
+	n1 := &FlowSpecNLRI{Value: cmp, rf: RF_FS_IPv4_UC}
+	cmp, err = ParseFlowSpecComponents(RF_FS_IPv4_UC, "source 10.0.0.0/24 destination-port =3128 protocol tcp")
+	assert.Nil(err)
+	n2 := &FlowSpecNLRI{Value: cmp, rf: RF_FS_IPv4_UC}
+	cmp, err = ParseFlowSpecComponents(RF_FS_IPv4_UC, "source 10.0.0.9/32 port =80 =8080 destination-port >8080&<8080 =3128 source-port >1024 protocol udp tcp")
+	n3 := &FlowSpecNLRI{Value: cmp, rf: RF_FS_IPv4_UC}
+	assert.Nil(err)
+	cmp, err = ParseFlowSpecComponents(RF_FS_IPv4_UC, "destination 192.168.0.2/32")
+	n4 := &FlowSpecNLRI{Value: cmp, rf: RF_FS_IPv4_UC}
+	assert.Nil(err)
+	r, err := CompareFlowSpecNLRI(n1, n2)
+	assert.Nil(err)
+	assert.True(r > 0)
+	r, err = CompareFlowSpecNLRI(n3, n4)
+	assert.Nil(err)
+	assert.True(r < 0)
+}

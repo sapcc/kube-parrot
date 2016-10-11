@@ -55,6 +55,8 @@ information about each option that appears later in this page.
 
     version: 0.1
     log:
+      accesslog:
+        disabled: true
       level: debug
       formatter: text
       fields:
@@ -99,6 +101,9 @@ information about each option that appears later in this page.
         secure: true
         v4auth: true
         chunksize: 5242880
+        multipartcopychunksize: 33554432
+        multipartcopymaxconcurrency: 100
+        multipartcopythresholdsize: 33554432
         rootdirectory: /s3/object/name/prefix
       swift:
         username: username
@@ -198,6 +203,8 @@ information about each option that appears later in this page.
         addr: localhost:5001
       headers:
         X-Content-Type-Options: [nosniff]
+      http2:
+        disabled: false
     notifications:
       endpoints:
         - name: alistener
@@ -207,6 +214,8 @@ information about each option that appears later in this page.
           timeout: 500
           threshold: 5
           backoff: 1000
+          ignoredmediatypes:
+            - application/octet-stream
     redis:
       addr: localhost:6379
       password: asecret
@@ -275,6 +284,8 @@ system outputs everything to stdout. You can adjust the granularity and format
 with this configuration section.
 
     log:
+      accesslog:
+        disabled: true
       level: debug
       formatter: text
       fields:
@@ -313,7 +324,7 @@ with this configuration section.
       <code>logstash</code>. The default is <code>text</code>.
     </td>
   </tr>
-    <tr>
+  <tr>
     <td>
       <code>fields</code>
     </td>
@@ -325,7 +336,18 @@ with this configuration section.
       the context. This is useful for identifying log messages source after
       being mixed in other systems.
     </td>
+  </tr>
 </table>
+
+### accesslog
+
+    accesslog:
+      disabled: true
+
+Within `log`, `accesslog` configures the behavior of the access logging
+system. By default, the access logging system outputs to stdout in
+[Combined Log Format](https://httpd.apache.org/docs/2.4/logs.html#combined).
+Access logging can be disabled by setting the boolean flag `disabled` to `true`.
 
 ## hooks
 
@@ -380,6 +402,9 @@ Permitted values are `error`, `warn`, `info` and `debug`. The default is
         secure: true
         v4auth: true
         chunksize: 5242880
+        multipartcopychunksize: 33554432
+        multipartcopymaxconcurrency: 100
+        multipartcopythresholdsize: 33554432
         rootdirectory: /s3/object/name/prefix
       swift:
         username: username
@@ -910,6 +935,8 @@ configuration may contain both.
         addr: localhost:5001
       headers:
         X-Content-Type-Options: [nosniff]
+      http2:
+        disabled: false
 
 The `http` option details the configuration for the HTTP server that hosts the registry.
 
@@ -1056,6 +1083,11 @@ and proxy connections to the registry server.
 The `letsencrypt` struct within `tls` is **optional**. Use this to configure TLS
 certificates provided by [Let's Encrypt](https://letsencrypt.org/how-it-works/).
 
+>**NOTE**: When using Let's Encrypt ensure that the outward facing address is
+> accessible on port `443`. The registry defaults to listening on `5000`, if
+> run as a container consider adding the flag `-p 443:5000` to the `docker run`
+> command or similar setting in cloud configuration.
+
 <table>
   <tr>
     <th>Parameter</th>
@@ -1112,6 +1144,29 @@ Including `X-Content-Type-Options: [nosniff]` is recommended, so that browsers
 will not interpret content as HTML if they are directed to load a page from the
 registry. This header is included in the example configuration files.
 
+### http2
+
+The `http2` struct within `http` is **optional**. Use this to control http2
+settings for the registry.
+
+<table>
+  <tr>
+    <th>Parameter</th>
+    <th>Required</th>
+    <th>Description</th>
+  </tr>
+  <tr>
+    <td>
+      <code>disabled</code>
+    </td>
+    <td>
+      no
+    </td>
+    <td>
+       A boolean that determines if http2 support should be disabled
+    </td>
+  </tr>
+</table>
 
 ## notifications
 
@@ -1124,6 +1179,8 @@ registry. This header is included in the example configuration files.
           timeout: 500
           threshold: 5
           backoff: 1000
+          ignoredmediatypes:
+            - application/octet-stream
 
 The notifications option is **optional** and currently may contain a single
 option, `endpoints`.
@@ -1236,6 +1293,18 @@ The URL to which events should be published.
         <li><code>h</code> (hours)</li>
       </ul>
     If you omit the suffix, the system interprets the value as nanoseconds.
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <code>ignoredmediatypes</code>
+    </td>
+    <td>
+      no
+    </td>
+    <td>
+      List of target media types to ignore. An event whose target media type
+      is present in this list will not be published to the endpoint.
     </td>
   </tr>
 </table>

@@ -71,6 +71,23 @@ func getIPv6LinkLocalAddress(ifname string) (string, error) {
 	return "", fmt.Errorf("no ipv6 link local address for %s", ifname)
 }
 
+func isLocalLinkLocalAddress(ifindex int, addr net.IP) (bool, error) {
+	ifi, err := net.InterfaceByIndex(ifindex)
+	if err != nil {
+		return false, err
+	}
+	addrs, err := ifi.Addrs()
+	if err != nil {
+		return false, err
+	}
+	for _, a := range addrs {
+		if ip, _, _ := net.ParseCIDR(a.String()); addr.Equal(ip) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func SetDefaultNeighborConfigValues(n *Neighbor, asn uint32) error {
 	return setDefaultNeighborConfigValuesWithViper(nil, n, asn)
 }
@@ -101,6 +118,14 @@ func setDefaultNeighborConfigValuesWithViper(v *viper.Viper, n *Neighbor, asn ui
 	}
 	if !v.IsSet("neighbor.timers.config.idle-hold-time-after-reset") && n.Timers.Config.IdleHoldTimeAfterReset == 0 {
 		n.Timers.Config.IdleHoldTimeAfterReset = float64(DEFAULT_IDLE_HOLDTIME_AFTER_RESET)
+	}
+
+	if n.Config.NeighborInterface != "" {
+		addr, err := GetIPv6LinkLocalNeighborAddress(n.Config.NeighborInterface)
+		if err != nil {
+			return err
+		}
+		n.Config.NeighborAddress = addr
 	}
 
 	if n.Transport.Config.LocalAddress == "" {
@@ -151,7 +176,6 @@ func setDefaultNeighborConfigValuesWithViper(v *viper.Viper, n *Neighbor, asn ui
 	}
 
 	n.State.Description = n.Config.Description
-	n.Config.Description = ""
 	n.State.AdminDown = n.Config.AdminDown
 
 	if n.GracefulRestart.Config.Enabled {

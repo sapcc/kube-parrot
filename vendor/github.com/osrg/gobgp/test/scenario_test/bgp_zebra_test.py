@@ -110,7 +110,9 @@ class GoBGPTestBase(unittest.TestCase):
                 next_hop = info[1].split('/')[0]
         self.assertFalse(next_hop == None)
         o1.add_static_route(self.bridges['br02_v4'].subnet, next_hop)
-        q1.get_reachablily('192.168.10.1')
+        addr = [e[1] for e in o1.ip_addrs if 'br01_v4' in e[2] ]
+        self.assertTrue(len(addr) == 1)
+        q1.get_reachablily(addr[0])
 
     """
       No.3 check whether the ping is reachable in container
@@ -123,7 +125,9 @@ class GoBGPTestBase(unittest.TestCase):
 
         next_hop = q1.ip_addrs[2][1].split('/')[0]
         o2.add_static_route(self.bridges['br02_v4'].subnet, next_hop)
-        g1.get_reachablily('192.168.30.2')
+        addr = [e[1] for e in o2.ip_addrs if 'br03_v4' in e[2] ]
+        self.assertTrue(len(addr) == 1)
+        g1.get_reachablily(addr[0])
 
     """
       No.4 start up ipv4 containers and check state
@@ -160,7 +164,9 @@ class GoBGPTestBase(unittest.TestCase):
         next_hop = g1.ip_addrs[1][1].split('/')[0]
         g1.set_ipv6_forward()
         o1.add_static_route(self.bridges['br02_v6'].subnet, next_hop)
-        q1.get_reachablily('2001:10::1')
+        addr = [e[1] for e in o1.ip_addrs if 'br01_v6' in e[2] ]
+        self.assertTrue(len(addr) == 1)
+        q1.get_reachablily(addr[0])
 
     """
       No.6 check whether the ping is reachable in container
@@ -174,7 +180,9 @@ class GoBGPTestBase(unittest.TestCase):
         next_hop = q1.ip_addrs[2][1].split('/')[0]
         q1.set_ipv6_forward()
         o2.add_static_route(self.bridges['br02_v6'].subnet, next_hop)
-        g1.get_reachablily('2001:30::2')
+        addr = [e[1] for e in o2.ip_addrs if 'br03_v6' in e[2] ]
+        self.assertTrue(len(addr) == 1)
+        g1.get_reachablily(addr[0])
 
     def test_07_mpath_test_setup(self):
         g1 = GoBGPContainer(name='g1', asn=65000, router_id='192.168.0.1',
@@ -213,7 +221,6 @@ class GoBGPTestBase(unittest.TestCase):
         g5 = self.ctns['g5']
         for g in [g2, g3, g4, g5]:
             g1.wait_for(expected_state=BGP_FSM_ESTABLISHED, peer=g)
-        time.sleep(3)
 
     def test_09_mpath_test_check_mpath_injected(self):
         g1 = self.ctns['g1']
@@ -230,52 +237,48 @@ class GoBGPTestBase(unittest.TestCase):
                     n.append(line.split(' ')[2].strip())
             return n
 
-        nhs = nexthops()
-        self.assertTrue(len(nhs) == 2)
-        self.assertTrue(g1.peers[g4]['neigh_addr'].split('/')[0] in nhs)
-        self.assertTrue(g1.peers[g5]['neigh_addr'].split('/')[0] in nhs)
+        def validate_nexthops(peers):
+            interval = 1
+            count = 0
+            timeout = 30
+            while True:
+                valid = False
+                nhs = nexthops()
+                if len(nhs) == len(peers):
+                    valid = True
+                    for peer in peers:
+                        if g1.peers[peer]['neigh_addr'].split('/')[0] not in nhs:
+                            valid = False
+                            break
+                if valid:
+                    return
+
+                time.sleep(interval)
+                count += interval
+                if count >= timeout:
+                    raise Exception(nhs)
+
+        validate_nexthops([g4, g5])
 
         g4.local('gobgp g ri del 10.0.10.0/24')
-        time.sleep(3)
-
-        nhs = nexthops()
-        self.assertTrue(len(nhs) == 1)
-        self.assertTrue(g1.peers[g5]['neigh_addr'].split('/')[0] in nhs)
+        validate_nexthops([g5])
 
         g4.local('gobgp g ri add 10.0.10.0/24 local-pref 200')
-        time.sleep(3)
-
-        nhs = nexthops()
-        self.assertTrue(len(nhs) == 1)
-        self.assertTrue(g1.peers[g4]['neigh_addr'].split('/')[0] in nhs)
+        validate_nexthops([g4])
 
         g4.local('gobgp g ri del 10.0.10.0/24')
         g5.local('gobgp g ri del 10.0.10.0/24')
-        time.sleep(3)
-
-        nhs = nexthops()
-        self.assertTrue(len(nhs) == 2)
-        self.assertTrue(g1.peers[g2]['neigh_addr'].split('/')[0] in nhs)
-        self.assertTrue(g1.peers[g3]['neigh_addr'].split('/')[0] in nhs)
+        validate_nexthops([g2, g3])
 
         g3.local('gobgp g ri del 10.0.10.0/24')
-        time.sleep(3)
-
-        nhs = nexthops()
-        self.assertTrue(len(nhs) == 1)
-        self.assertTrue(g1.peers[g2]['neigh_addr'].split('/')[0] in nhs)
+        validate_nexthops([g2])
 
         g3.local('gobgp g ri add 10.0.10.0/24 med 10')
-
-        nhs = nexthops()
-        self.assertTrue(len(nhs) == 1)
-        self.assertTrue(g1.peers[g2]['neigh_addr'].split('/')[0] in nhs)
+        validate_nexthops([g2])
 
         g2.local('gobgp g ri add 10.0.10.0/24 med 20')
+        validate_nexthops([g3])
 
-        nhs = nexthops()
-        self.assertTrue(len(nhs) == 1)
-        self.assertTrue(g1.peers[g3]['neigh_addr'].split('/')[0] in nhs)
 
 if __name__ == '__main__':
     if os.geteuid() is not 0:

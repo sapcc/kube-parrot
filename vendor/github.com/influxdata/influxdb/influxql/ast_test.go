@@ -61,77 +61,6 @@ func TestDataType_String(t *testing.T) {
 	}
 }
 
-// Ensure the SELECT statement can extract substatements.
-func TestSelectStatement_Substatement(t *testing.T) {
-	var tests = []struct {
-		stmt string
-		expr *influxql.VarRef
-		sub  string
-		err  string
-	}{
-		// 0. Single series
-		{
-			stmt: `SELECT value FROM myseries WHERE value > 1`,
-			expr: &influxql.VarRef{Val: "value"},
-			sub:  `SELECT value FROM myseries WHERE value > 1`,
-		},
-
-		// 1. Simple join
-		{
-			stmt: `SELECT sum(aa.value) + sum(bb.value) FROM aa, bb`,
-			expr: &influxql.VarRef{Val: "aa.value"},
-			sub:  `SELECT "aa.value" FROM aa`,
-		},
-
-		// 2. Simple merge
-		{
-			stmt: `SELECT sum(aa.value) + sum(bb.value) FROM aa, bb`,
-			expr: &influxql.VarRef{Val: "bb.value"},
-			sub:  `SELECT "bb.value" FROM bb`,
-		},
-
-		// 3. Join with condition
-		{
-			stmt: `SELECT sum(aa.value) + sum(bb.value) FROM aa, bb WHERE aa.host = 'servera' AND bb.host = 'serverb'`,
-			expr: &influxql.VarRef{Val: "bb.value"},
-			sub:  `SELECT "bb.value" FROM bb WHERE "bb.host" = 'serverb'`,
-		},
-
-		// 4. Join with complex condition
-		{
-			stmt: `SELECT sum(aa.value) + sum(bb.value) FROM aa, bb WHERE aa.host = 'servera' AND (bb.host = 'serverb' OR bb.host = 'serverc') AND 1 = 2`,
-			expr: &influxql.VarRef{Val: "bb.value"},
-			sub:  `SELECT "bb.value" FROM bb WHERE ("bb.host" = 'serverb' OR "bb.host" = 'serverc') AND 1 = 2`,
-		},
-
-		// 5. 4 with different condition order
-		{
-			stmt: `SELECT sum(aa.value) + sum(bb.value) FROM aa, bb WHERE ((bb.host = 'serverb' OR bb.host = 'serverc') AND aa.host = 'servera') AND 1 = 2`,
-			expr: &influxql.VarRef{Val: "bb.value"},
-			sub:  `SELECT "bb.value" FROM bb WHERE (("bb.host" = 'serverb' OR "bb.host" = 'serverc')) AND 1 = 2`,
-		},
-	}
-
-	for i, tt := range tests {
-		// Parse statement.
-		stmt, err := influxql.NewParser(strings.NewReader(tt.stmt)).ParseStatement()
-		if err != nil {
-			t.Fatalf("invalid statement: %q: %s", tt.stmt, err)
-		}
-
-		// Extract substatement.
-		sub, err := stmt.(*influxql.SelectStatement).Substatement(tt.expr)
-		if err != nil {
-			t.Errorf("%d. %q: unexpected error: %s", i, tt.stmt, err)
-			continue
-		}
-		if substr := sub.String(); tt.sub != substr {
-			t.Errorf("%d. %q: unexpected substatement:\n\nexp=%s\n\ngot=%s\n\n", i, tt.stmt, tt.sub, substr)
-			continue
-		}
-	}
-}
-
 // Ensure the SELECT statement can extract GROUP BY interval.
 func TestSelectStatement_GroupByInterval(t *testing.T) {
 	q := "SELECT sum(value) from foo  where time < now() GROUP BY time(10m)"
@@ -770,7 +699,6 @@ func TestTimeRange(t *testing.T) {
 
 		// number literal
 		{expr: `time < 10`, min: `0001-01-01T00:00:00Z`, max: `1970-01-01T00:00:00.000000009Z`},
-		{expr: `time < 10i`, min: `0001-01-01T00:00:00Z`, max: `1970-01-01T00:00:00.000000009Z`},
 
 		// Equality
 		{expr: `time = '2000-01-01 00:00:00'`, min: `2000-01-01T00:00:00Z`, max: `2000-01-01T00:00:00.000000001Z`},
@@ -1091,10 +1019,13 @@ func TestReduce(t *testing.T) {
 		{in: `true <> false`, out: `true`},
 		{in: `true + false`, out: `true + false`},
 
-		// Time literals.
+		// Time literals with now().
 		{in: `now() + 2h`, out: `'2000-01-01T02:00:00Z'`, data: map[string]interface{}{"now()": now}},
 		{in: `now() / 2h`, out: `'2000-01-01T00:00:00Z' / 2h`, data: map[string]interface{}{"now()": now}},
 		{in: `4µ + now()`, out: `'2000-01-01T00:00:00.000004Z'`, data: map[string]interface{}{"now()": now}},
+		{in: `now() + 2000000000`, out: `'2000-01-01T00:00:02Z'`, data: map[string]interface{}{"now()": now}},
+		{in: `2000000000 + now()`, out: `'2000-01-01T00:00:02Z'`, data: map[string]interface{}{"now()": now}},
+		{in: `now() - 2000000000`, out: `'1999-12-31T23:59:58Z'`, data: map[string]interface{}{"now()": now}},
 		{in: `now() = now()`, out: `true`, data: map[string]interface{}{"now()": now}},
 		{in: `now() <> now()`, out: `false`, data: map[string]interface{}{"now()": now}},
 		{in: `now() < now() + 1h`, out: `true`, data: map[string]interface{}{"now()": now}},
@@ -1105,6 +1036,28 @@ func TestReduce(t *testing.T) {
 		{in: `now() AND now()`, out: `'2000-01-01T00:00:00Z' AND '2000-01-01T00:00:00Z'`, data: map[string]interface{}{"now()": now}},
 		{in: `now()`, out: `now()`},
 		{in: `946684800000000000 + 2h`, out: `'2000-01-01T02:00:00Z'`},
+
+		// Time literals.
+		{in: `'2000-01-01T00:00:00Z' + 2h`, out: `'2000-01-01T02:00:00Z'`},
+		{in: `'2000-01-01T00:00:00Z' / 2h`, out: `'2000-01-01T00:00:00Z' / 2h`},
+		{in: `4µ + '2000-01-01T00:00:00Z'`, out: `'2000-01-01T00:00:00.000004Z'`},
+		{in: `'2000-01-01T00:00:00Z' + 2000000000`, out: `'2000-01-01T00:00:02Z'`},
+		{in: `2000000000 + '2000-01-01T00:00:00Z'`, out: `'2000-01-01T00:00:02Z'`},
+		{in: `'2000-01-01T00:00:00Z' - 2000000000`, out: `'1999-12-31T23:59:58Z'`},
+		{in: `'2000-01-01T00:00:00Z' = '2000-01-01T00:00:00Z'`, out: `true`},
+		{in: `'2000-01-01T00:00:00.000000000Z' = '2000-01-01T00:00:00Z'`, out: `true`},
+		{in: `'2000-01-01T00:00:00Z' <> '2000-01-01T00:00:00Z'`, out: `false`},
+		{in: `'2000-01-01T00:00:00.000000000Z' <> '2000-01-01T00:00:00Z'`, out: `false`},
+		{in: `'2000-01-01T00:00:00Z' < '2000-01-01T00:00:00Z' + 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00.000000000Z' < '2000-01-01T00:00:00Z' + 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00Z' <= '2000-01-01T00:00:00Z' + 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00.000000000Z' <= '2000-01-01T00:00:00Z' + 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00Z' > '2000-01-01T00:00:00Z' - 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00.000000000Z' > '2000-01-01T00:00:00Z' - 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00Z' >= '2000-01-01T00:00:00Z' - 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00.000000000Z' >= '2000-01-01T00:00:00Z' - 1h`, out: `true`},
+		{in: `'2000-01-01T00:00:00Z' - ('2000-01-01T00:00:00Z' - 60s)`, out: `1m`},
+		{in: `'2000-01-01T00:00:00Z' AND '2000-01-01T00:00:00Z'`, out: `'2000-01-01T00:00:00Z' AND '2000-01-01T00:00:00Z'`},
 
 		// Duration literals.
 		{in: `10m + 1h - 60s`, out: `69m`},

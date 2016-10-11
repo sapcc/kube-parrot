@@ -673,6 +673,22 @@ func (itr *floatFillIterator) Next() (*FloatPoint, error) {
 		}
 
 		switch itr.opt.Fill {
+		case LinearFill:
+			if !itr.prev.Nil {
+				next, err := itr.input.peek()
+				if err != nil {
+					return nil, err
+				}
+				if next != nil {
+					interval := int64(itr.opt.Interval.Duration)
+					start := itr.window.time / interval
+					p.Value = linearFloat(start, itr.prev.Time/interval, next.Time/interval, itr.prev.Value, next.Value)
+				} else {
+					p.Nil = true
+				}
+			} else {
+				p.Nil = true
+			}
 		case NullFill:
 			p.Nil = true
 		case NumberFill:
@@ -719,6 +735,11 @@ func (itr *floatIntervalIterator) Next() (*FloatPoint, error) {
 		return nil, err
 	}
 	p.Time, _ = itr.opt.Window(p.Time)
+	// If we see the minimum allowable time, set the time to zero so we don't
+	// break the default returned time for aggregate queries without times.
+	if p.Time == MinTime {
+		p.Time = 0
+	}
 	return p, nil
 }
 
@@ -2737,6 +2758,22 @@ func (itr *integerFillIterator) Next() (*IntegerPoint, error) {
 		}
 
 		switch itr.opt.Fill {
+		case LinearFill:
+			if !itr.prev.Nil {
+				next, err := itr.input.peek()
+				if err != nil {
+					return nil, err
+				}
+				if next != nil {
+					interval := int64(itr.opt.Interval.Duration)
+					start := itr.window.time / interval
+					p.Value = linearInteger(start, itr.prev.Time/interval, next.Time/interval, itr.prev.Value, next.Value)
+				} else {
+					p.Nil = true
+				}
+			} else {
+				p.Nil = true
+			}
 		case NullFill:
 			p.Nil = true
 		case NumberFill:
@@ -2783,6 +2820,11 @@ func (itr *integerIntervalIterator) Next() (*IntegerPoint, error) {
 		return nil, err
 	}
 	p.Time, _ = itr.opt.Window(p.Time)
+	// If we see the minimum allowable time, set the time to zero so we don't
+	// break the default returned time for aggregate queries without times.
+	if p.Time == MinTime {
+		p.Time = 0
+	}
 	return p, nil
 }
 
@@ -4798,6 +4840,8 @@ func (itr *stringFillIterator) Next() (*StringPoint, error) {
 		}
 
 		switch itr.opt.Fill {
+		case LinearFill:
+			fallthrough
 		case NullFill:
 			p.Nil = true
 		case NumberFill:
@@ -4844,6 +4888,11 @@ func (itr *stringIntervalIterator) Next() (*StringPoint, error) {
 		return nil, err
 	}
 	p.Time, _ = itr.opt.Window(p.Time)
+	// If we see the minimum allowable time, set the time to zero so we don't
+	// break the default returned time for aggregate queries without times.
+	if p.Time == MinTime {
+		p.Time = 0
+	}
 	return p, nil
 }
 
@@ -6859,6 +6908,8 @@ func (itr *booleanFillIterator) Next() (*BooleanPoint, error) {
 		}
 
 		switch itr.opt.Fill {
+		case LinearFill:
+			fallthrough
 		case NullFill:
 			p.Nil = true
 		case NumberFill:
@@ -6905,6 +6956,11 @@ func (itr *booleanIntervalIterator) Next() (*BooleanPoint, error) {
 		return nil, err
 	}
 	p.Time, _ = itr.opt.Window(p.Time)
+	// If we see the minimum allowable time, set the time to zero so we don't
+	// break the default returned time for aggregate queries without times.
+	if p.Time == MinTime {
+		p.Time = 0
+	}
 	return p, nil
 }
 
