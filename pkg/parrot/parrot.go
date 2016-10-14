@@ -8,8 +8,8 @@ import (
 
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
-	"github.com/sapcc/kube-parrot/pkg/kubernetes"
-	"k8s.io/client-go/1.4/kubernetes"
+	client "github.com/sapcc/kube-parrot/pkg/kubernetes"
+	"k8s.io/client-go/1.5/kubernetes"
 )
 
 var (
@@ -36,11 +36,11 @@ func New(opts Options) *Parrot {
 	parrot := &Parrot{
 		Options: opts,
 		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort),
-		client:  kubernetes.NewClient(),
+		client:  client.NewClient(),
 	}
 
 	parrot.podSubnets = controller.NewPodSubnetsController(parrot.client, parrot.bgp)
-	parrot.externalSevices = controller.NewExternalServicesController(parrot.client)
+	parrot.externalSevices = controller.NewExternalServicesController(parrot.client, parrot.bgp)
 
 	return parrot
 }
@@ -57,6 +57,6 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 		p.bgp.AddNeighbor(neighbor.String())
 	}
 
-	go p.podSubnets.Run(stopCh)
+	//go p.podSubnets.Run(stopCh)
 	go p.externalSevices.Run(stopCh, wg)
 }

@@ -5,13 +5,29 @@ import (
 	"net"
 	"time"
 
+	"github.com/golang/glog"
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/table"
 
-	"k8s.io/client-go/1.4/pkg/api"
+	"k8s.io/client-go/1.5/pkg/api/v1"
+	"k8s.io/client-go/1.5/tools/cache"
 )
 
-func getPodSubnetRoute(node *api.Node) (*table.Path, error) {
+func NoResyncPeriodFunc() time.Duration {
+	return 0
+}
+
+func getKey(obj interface{}) string {
+	key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
+	if err != nil {
+		glog.Errorf("Couldn't get key for object %+v: %v", obj, err)
+		return "unkown"
+	}
+
+	return key
+}
+
+func getPodSubnetRoute(node *v1.Node) (*table.Path, error) {
 	nodeIP, err := getNodeIP(node)
 	if err != nil {
 		return nil, err
@@ -33,10 +49,21 @@ func getPodSubnetRoute(node *api.Node) (*table.Path, error) {
 	return table.NewPath(nil, nlri, false, pattr, time.Now(), false), nil
 }
 
-func getNodeIP(node *api.Node) (net.IP, error) {
+func getExternalIPRoute(service, node net.IP, isWithdraw bool) *table.Path {
+	nlri := bgp.NewIPAddrPrefix(uint8(32), service.String())
+
+	pattr := []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
+		bgp.NewPathAttributeNextHop(node.String()),
+	}
+
+	return table.NewPath(nil, nlri, isWithdraw, pattr, time.Now(), false)
+}
+
+func getNodeIP(node *v1.Node) (net.IP, error) {
 	var nodeIP net.IP
 	for _, address := range node.Status.Addresses {
-		if address.Type == api.NodeInternalIP {
+		if address.Type == v1.NodeInternalIP {
 			nodeIP = net.ParseIP(address.Address)
 		}
 	}
@@ -48,7 +75,7 @@ func getNodeIP(node *api.Node) (net.IP, error) {
 	return nodeIP, nil
 }
 
-func getPodSubnet(node *api.Node) (*net.IPNet, error) {
+func getPodSubnet(node *v1.Node) (*net.IPNet, error) {
 	nodeIP, err := getNodeIP(node)
 	if err != nil {
 		return nil, err

@@ -1,81 +1,132 @@
 package controller
 
 import (
+	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/client-go/1.4/pkg/api"
-	
+	"github.com/sapcc/kube-parrot/pkg/bgp"
+	"k8s.io/client-go/1.5/kubernetes"
+	"k8s.io/client-go/1.5/pkg/api"
+	"k8s.io/client-go/1.5/pkg/api/v1"
+	"k8s.io/client-go/1.5/pkg/labels"
+	"k8s.io/client-go/1.5/pkg/runtime"
+	"k8s.io/client-go/1.5/pkg/util/wait"
+	"k8s.io/client-go/1.5/pkg/watch"
+	"k8s.io/client-go/1.5/tools/cache"
 )
 
 type ExternalServicesController struct {
-	client *clientset.Clientset
-	queue  *workqueue.Type
+	client *kubernetes.Clientset
+	bgp    *bgp.Server
+
+	queue  *cache.FIFO
 	synced func() bool
 
-	services           cache.StoreToServiceLister
-	servicesController *framework.Controller
-	nodes              cache.StoreToNodeLister
-	nodesController    *framework.Controller
+	endpoints           cache.Store
+	endpointsController *cache.Controller
+	services            cache.Store
+	servicesController  *cache.Controller
+	nodes               cache.Store
+	nodesController     *cache.Controller
 }
 
-var (
-	keyFunc = framework.DeletionHandlingMetaNamespaceKeyFunc
-)
-
 const (
-	StoreSyncedPollPeriod = 100 * time.Millisecond
+	StoreSyncedPollPeriod     = 100 * time.Millisecond
+	AnnotationBGPAnnouncement = "parrot.sap.cc/announce"
 )
 
-func NewExternalServicesController(client *clientset.Clientset) *ExternalServicesController {
+func NewExternalServicesController(client *kubernetes.Clientset, bgp *bgp.Server) *ExternalServicesController {
 	c := &ExternalServicesController{
 		client: client,
-		queue:  workqueue.New(),
+		bgp:    bgp,
+		queue: cache.NewFIFO(func(obj interface{}) (string, error) {
+			return obj.(string), nil
+		}),
 	}
 
-	c.services.Store, c.servicesController = framework.NewInformer(
+	handlerFuncs := cache.ResourceEventHandlerFuncs{
+		AddFunc: c.enqueue,
+		UpdateFunc: func(old, cur interface{}) {
+			c.enqueue(cur)
+		},
+		DeleteFunc: c.enqueue,
+	}
+
+	c.endpoints, c.endpointsController = cache.NewInformer(
 		&cache.ListWatch{
 			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-				return c.client.Core().Services(api.NamespaceAll).List(options)
+				return c.client.Endpoints(api.NamespaceAll).List(options)
 			},
 			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				return c.client.Core().Services(api.NamespaceAll).Watch(options)
+				return c.client.Endpoints(api.NamespaceAll).Watch(options)
 			},
 		},
-		&api.Service{},
-		controller.NoResyncPeriodFunc(),
-		framework.ResourceEventHandlerFuncs{
-			AddFunc: c.enqueueService,
-			UpdateFunc: func(old, cur interface{}) {
-				c.enqueueService(cur)
-			},
-			DeleteFunc: c.enqueueService,
-		},
+		&v1.Endpoints{},
+		NoResyncPeriodFunc(),
+		handlerFuncs,
 	)
 
-	c.nodes.Store, c.nodesController = framework.NewInformer(
+	c.services, c.servicesController = cache.NewIndexerInformer(
 		&cache.ListWatch{
 			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-				return c.client.Core().Nodes().List(options)
+				return c.client.Services(api.NamespaceAll).List(options)
 			},
 			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				return c.client.Core().Nodes().Watch(options)
+				return c.client.Services(api.NamespaceAll).Watch(options)
 			},
 		},
-		&api.Node{},
-		controller.NoResyncPeriodFunc(),
-		framework.ResourceEventHandlerFuncs{
-			AddFunc:    c.reconcileServices,
-			DeleteFunc: c.reconcileServices,
+		&v1.Service{},
+		NoResyncPeriodFunc(),
+		handlerFuncs,
+		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+	)
+
+	c.nodes, c.nodesController = cache.NewInformer(
+		&cache.ListWatch{
+			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+				options.LabelSelector = labels.SelectorFromSet(labels.Set{"zone": "farm"})
+				return c.client.Nodes().List(options)
+			},
+			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				options.LabelSelector = labels.SelectorFromSet(labels.Set{"zone": "farm"})
+				return c.client.Nodes().Watch(options)
+			},
 		},
+		&v1.Node{},
+		NoResyncPeriodFunc(),
+		cache.ResourceEventHandlerFuncs{},
 	)
 
 	c.synced = func() bool {
-		return c.servicesController.HasSynced() && c.nodesController.HasSynced()
+		return c.servicesController.HasSynced() &&
+			c.nodesController.HasSynced() &&
+			c.endpointsController.HasSynced()
 	}
 
 	return c
+}
+
+// addEndpoint          --> for proxies { announce(endpoint.getService().ExternalIP, proxy) }
+// deleteEndpoint       --> for proxies { withdraw(endpoint.getService().ExternalIP, proxy) }
+// updateEndpoint       --> addEndpoint(endpoint)
+//
+// addService           --> for proxies { announce(service.ExternalIP, proxy) }
+// deleteService        --> for proxies { withdraw(service.ExternalIP, proxy) }
+// updateService        --> addService(service)
+//
+// addProxyEndpoint     --> for services { announce(service.ExternalIP, proxy) }
+// deleteProxyEndpoint  --> for services { withdraw(service.ExternalIP, proxy) }
+// updateProxyEndpoint  --> addProxyEndpoint(proxy)
+
+
+func (c *ExternalServicesController) enqueue(obj interface{}) {
+	if key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj); err == nil {
+		c.queue.Add(key)
+	}
 }
 
 func (c *ExternalServicesController) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
@@ -84,80 +135,136 @@ func (c *ExternalServicesController) Run(stopCh <-chan struct{}, wg *sync.WaitGr
 
 	go c.servicesController.Run(stopCh)
 	go c.nodesController.Run(stopCh)
-
-	for i := 0; i < 2; i++ {
-		go wait.Until(c.worker, time.Second, stopCh)
-	}
+	go c.endpointsController.Run(stopCh)
+	go wait.Until(c.worker, time.Second, stopCh)
 
 	<-stopCh
-	c.queue.ShutDown()
-}
-
-func (c *ExternalServicesController) enqueueService(obj interface{}) {
-	if service, ok := obj.(*api.Service); ok {
-		if len(service.Spec.ExternalIPs) == 0 {
-			return
-		}
-	} else {
-		glog.Errorf("Couldn't get service from object: %+v", obj)
-		return
-	}
-
-	key, err := keyFunc(obj)
-	if err != nil {
-		glog.Errorf("Couldn't get key for object %+v: %v", obj, err)
-		return
-	}
-
-	glog.V(3).Infof("Service queued: %s", key)
-	c.queue.Add(key)
 }
 
 func (c *ExternalServicesController) worker() {
-	glog.V(3).Infof("Worker Started")
-	for {
-		func() {
-			key, quit := c.queue.Get()
-			if quit {
-				return
-			}
-			defer c.queue.Done(key)
-			c.syncService(key.(string))
-		}()
+	for !c.synced() {
+		time.Sleep(StoreSyncedPollPeriod)
+		glog.V(3).Infof("Waiting for controllers to be synced")
 	}
+
+	for {
+		if r, err := c.queue.Pop(c.syncService); err != nil {
+			c.queue.AddIfNotPresent(r)
+		}
+	}
+
 }
 
-func (c *ExternalServicesController) syncService(key string) {
+func (c *ExternalServicesController) syncService(obj interface{}) error {
+	key := obj.(string)
 	startTime := time.Now()
 
-	if !c.synced() {
-		glog.V(3).Infof("Waiting for controllers to sync, requeuing service %v", key)
-		time.Sleep(StoreSyncedPollPeriod)
-		c.queue.Add(key)
-		return
-	}
-
-	obj, exists, err := c.services.GetByKey(key)
+	serviceObj, exists, err := c.services.GetByKey(key)
 	if err != nil || !exists {
-		// Delete routes, as the service has been deleted.
-		glog.V(3).Infof("Deleting Routes for Service %s", key)
-		return
+		glog.V(3).Infof("Service does not exist anymore. Doing nothing.: %v", key)
+		// Could this be a problem when a service is deleted?
+		// We could possibly have an announcement in the bgp session but don't know its
+		// IP anymore here, so we can't delete it without keeping some state.
+		return nil
+	}
+	service := serviceObj.(*v1.Service)
+
+	if l, ok := service.Annotations[AnnotationBGPAnnouncement]; ok {
+		announcementRequested, err := strconv.ParseBool(l)
+		if err != nil {
+			glog.Errorf("Failed to parse annotation %v: %v", AnnotationBGPAnnouncement, err)
+			return nil
+		}
+
+		if !announcementRequested {
+			glog.V(3).Infof("Skipping service %v. Annotation is set but not true. Huh?", key)
+			return nil
+		}
+	} else {
+		glog.V(3).Infof("Skipping service %v. No announce annotation defined...", key)
+		return nil
 	}
 
-	service := obj.(*api.Service)
-	glog.V(3).Infof("Creating Routes for Service %s", service.GetName())
+	if len(service.Spec.ExternalIPs) == 0 {
+		glog.V(3).Infof("Skipping service %v. No externalIP defined...", key)
+		return nil
+	}
+
+	endpointsObj, exists, err := c.endpoints.GetByKey(key)
+	if err != nil || !exists {
+		glog.Infof("Service without endpoints: %s", key)
+		c.deleteRoute(service)
+		return nil
+	}
+
+	endpoints := endpointsObj.(*v1.Endpoints)
+	ready := false
+	for _, v := range endpoints.Subsets {
+		if len(v.Addresses) > 0 {
+			ready = true
+			break
+		}
+	}
+	if ready {
+		glog.Infof("Service up: %s", service.GetName())
+		c.addRoute(service)
+	} else {
+		glog.Infof("Service down: %s", service.GetName())
+		c.deleteRoute(service)
+	}
 
 	glog.V(3).Infof("Finished syncing service %q (%v)", key, time.Now().Sub(startTime))
+	return nil
 }
 
 func (c *ExternalServicesController) reconcileServices(obj interface{}) {
-	serviceList, err := c.services.List()
-	if err != nil {
-		glog.Errorf("Couldn't reconcile services: %s", err)
-		return
+	for _, service := range c.services.List() {
+		c.enqueue(&service)
 	}
+}
 
-	for _, service := range serviceList.Items {
-		c.enqueueService(&service)
+func (c *ExternalServicesController) addRoute(service *v1.Service) {
+	nodes := c.nodes.List()
+
+	for _, ip := range service.Spec.ExternalIPs {
+		for _, node := range nodes {
+			var nodeIP net.IP
+			for _, address := range node.(*v1.Node).Status.Addresses {
+				if address.Type == v1.NodeInternalIP {
+					nodeIP = net.ParseIP(address.Address)
+				}
+			}
+
+			if nodeIP == nil {
+				glog.Errorf("Couldn't get IP for node: %s", node)
+			}
+
+			route := getExternalIPRoute(net.ParseIP(ip), nodeIP, false)
+			fmt.Printf("Adding %s\n", route)
+			c.bgp.AddPath(route)
+		}
+	}
+}
+
+func (c *ExternalServicesController) deleteRoute(service *v1.Service) {
+	nodes := c.nodes.List()
+
+	for _, ip := range service.Spec.ExternalIPs {
+		for _, node := range nodes {
+			var nodeIP net.IP
+			for _, address := range node.(*v1.Node).Status.Addresses {
+				if address.Type == v1.NodeInternalIP {
+					nodeIP = net.ParseIP(address.Address)
+				}
+			}
+
+			if nodeIP == nil {
+				glog.Errorf("Couldn't get IP for node: %s", node)
+			}
+
+			route := getExternalIPRoute(net.ParseIP(ip), nodeIP, true)
+			fmt.Printf("Deleting %s\n", route)
+			c.bgp.DeletePath(route)
+		}
 	}
 }

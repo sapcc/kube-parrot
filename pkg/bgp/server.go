@@ -43,6 +43,8 @@ func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 	wg.Add(1)
 
+	// logrus.SetLevel(logrus.DebugLevel)
+
 	go s.bgp.Serve()
 	go s.grpc.Serve()
 
@@ -69,17 +71,20 @@ func (s *Server) startServer() {
 }
 
 func (s *Server) AddPath(path *table.Path) {
-	glog.Infof("Adding Path: %s", path)
+	glog.V(3).Infof("Adding Path: %s", path)
 	if _, err := s.bgp.AddPath("", []*table.Path{path}); err != nil {
 		glog.Errorf("Oops. Something went wrong adding path: %s", err)
 	}
+
+	s.debug()
 }
 
 func (s *Server) DeletePath(path *table.Path) {
-	glog.Infof("Deleting Path: %s", path)
+	glog.V(3).Infof("Deleting Path: %s", path)
 	if err := s.bgp.DeletePath(nil, bgp.RF_IPv4_UC, "", []*table.Path{path}); err != nil {
 		glog.Errorf("Oops. Something went wrong deleting route: %s", err)
 	}
+	s.debug()
 }
 
 func (s *Server) AddNeighbor(neighbor string) {
@@ -93,5 +98,11 @@ func (s *Server) AddNeighbor(neighbor string) {
 
 	if err := s.bgp.AddNeighbor(n); err != nil {
 		glog.Errorf("Oops. Something went wrong adding neighbor: %s", err)
+	}
+}
+
+func (s *Server) debug() {
+	for _, route := range s.bgp.GetRib() {
+		glog.V(5).Infof("%s", route)
 	}
 }

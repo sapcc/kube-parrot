@@ -1,27 +1,34 @@
 package controller
 
 import (
+	"fmt"
+
 	"github.com/golang/glog"
-	"k8s.io/client-go/1.4/pkg/api"
+	"k8s.io/client-go/1.5/kubernetes"
+	"k8s.io/client-go/1.5/pkg/api"
+	"k8s.io/client-go/1.5/pkg/api/v1"
+	"k8s.io/client-go/1.5/pkg/runtime"
+	"k8s.io/client-go/1.5/pkg/watch"
+	"k8s.io/client-go/1.5/tools/cache"
 
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 )
 
 type PodSubnetsController struct {
-	client *clientset.Clientset
+	client *kubernetes.Clientset
 
 	store      cache.Store
-	controller *framework.Controller
+	controller *cache.Controller
 	bgp        *bgp.Server
 }
 
-func NewPodSubnetsController(client *clientset.Clientset, bgp *bgp.Server) *PodSubnetsController {
+func NewPodSubnetsController(client *kubernetes.Clientset, bgp *bgp.Server) *PodSubnetsController {
 	n := &PodSubnetsController{
 		client: client,
 		bgp:    bgp,
 	}
 
-	n.store, n.controller = framework.NewInformer(
+	n.store, n.controller = cache.NewInformer(
 		&cache.ListWatch{
 			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
 				return n.client.Core().Nodes().List(options)
@@ -30,9 +37,9 @@ func NewPodSubnetsController(client *clientset.Clientset, bgp *bgp.Server) *PodS
 				return n.client.Core().Nodes().Watch(options)
 			},
 		},
-		&api.Node{},
-		controller.NoResyncPeriodFunc(),
-		framework.ResourceEventHandlerFuncs{
+		&v1.Node{},
+		NoResyncPeriodFunc(),
+		cache.ResourceEventHandlerFuncs{
 			AddFunc:    n.addNode,
 			DeleteFunc: n.deleteNode,
 		},
@@ -46,8 +53,8 @@ func (n *PodSubnetsController) Run(stopCh <-chan struct{}) {
 }
 
 func (n *PodSubnetsController) addNode(obj interface{}) {
-	node := obj.(*api.Node)
-	glog.V(3).Infof("Node created: %s", node.GetName())
+	node := obj.(*v1.Node)
+	glog.Infof("Node created: %s", node.GetName())
 
 	route, err := getPodSubnetRoute(node)
 	if err != nil {
@@ -55,12 +62,13 @@ func (n *PodSubnetsController) addNode(obj interface{}) {
 		return
 	}
 
+	fmt.Printf("Adding %s\n", route)
 	n.bgp.AddPath(route)
 }
 
 func (n *PodSubnetsController) deleteNode(obj interface{}) {
-	node := obj.(*api.Node)
-	glog.V(3).Infof("Node deleted: %s", node.GetName())
+	node := obj.(*v1.Node)
+	glog.Infof("Node deleted: %s", node.GetName())
 
 	route, err := getPodSubnetRoute(node)
 	if err != nil {
@@ -68,5 +76,6 @@ func (n *PodSubnetsController) deleteNode(obj interface{}) {
 		return
 	}
 
+	fmt.Printf("Deleting %s\n", route)
 	n.bgp.DeletePath(route)
 }

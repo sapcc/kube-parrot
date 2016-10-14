@@ -38,6 +38,7 @@ func main() {
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 
 	opts.Neighbors = neighbors
+	opts.GrpcPort = 12345
 	parrot := parrot.New(opts)
 
 	wg := &sync.WaitGroup{}
