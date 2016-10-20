@@ -8,7 +8,7 @@ import (
 
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
-	"github.com/sapcc/kube-parrot/pkg/informer"
+	"github.com/sapcc/kube-parrot/pkg/forked/informer"
 	client "github.com/sapcc/kube-parrot/pkg/kubernetes"
 	"k8s.io/client-go/1.5/kubernetes"
 )

@@ -9,9 +9,9 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/sapcc/kube-parrot/pkg/bgp"
+	"github.com/sapcc/kube-parrot/pkg/forked/informer"
 	"github.com/sapcc/kube-parrot/pkg/forked/util"
 	"github.com/sapcc/kube-parrot/pkg/forked/workqueue"
-	"github.com/sapcc/kube-parrot/pkg/informer"
 	"k8s.io/client-go/1.5/pkg/api/v1"
 	"k8s.io/client-go/1.5/pkg/types"
 	"k8s.io/client-go/1.5/pkg/util/wait"
