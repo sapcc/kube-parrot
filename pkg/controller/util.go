@@ -49,16 +49,7 @@ func getPodSubnetRoute(node *v1.Node) (*table.Path, error) {
 	return table.NewPath(nil, nlri, false, pattr, time.Now(), false), nil
 }
 
-func getExternalIPRoute(service, node net.IP, isWithdraw bool) *table.Path {
-	nlri := bgp.NewIPAddrPrefix(uint8(32), service.String())
 
-	pattr := []bgp.PathAttributeInterface{
-		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
-		bgp.NewPathAttributeNextHop(node.String()),
-	}
-
-	return table.NewPath(nil, nlri, isWithdraw, pattr, time.Now(), false)
-}
 
 func getNodeIP(node *v1.Node) (net.IP, error) {
 	var nodeIP net.IP

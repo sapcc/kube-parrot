@@ -6,9 +6,9 @@ type KubeProxyIndexer struct {
 	store cache.Indexer
 }
 
-func NewKubeProxyIndexer() KubeProxyIndexer {
-	return KubeProxyIndexer{cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{"kube-proxies": kubeProxiesIndexFunc})}
-}
+//func NewKubeProxyIndexer() KubeProxyIndexer {
+//  return KubeProxyIndexer{cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{"kube-proxies": kubeProxiesIndexFunc})}
+//}
 
 //func kubeProxiesIndexFunc(obj interface{}) ([]string, error) {
 //  if pod, ok := obj.(*api.Pod); ok {

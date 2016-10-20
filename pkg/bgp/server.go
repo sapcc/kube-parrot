@@ -70,21 +70,53 @@ func (s *Server) startServer() {
 	}
 }
 
-func (s *Server) AddPath(path *table.Path) {
-	glog.V(3).Infof("Adding Path: %s", path)
-	if _, err := s.bgp.AddPath("", []*table.Path{path}); err != nil {
-		glog.Errorf("Oops. Something went wrong adding path: %s", err)
+func (s *Server) AddRoute(source, nextHop string) error {
+	sourceIP := net.ParseIP(source)
+	nextHopIP := net.ParseIP(nextHop)
+
+	if sourceIP == nil {
+		return fmt.Errorf("Error adding route. Source %s is not an IP,", source)
 	}
 
-	s.debug()
+	if nextHopIP == nil {
+		return fmt.Errorf("Error adding route. NextHop %s is not an IP,", nextHop)
+	}
+
+	return s.AddPath(getExternalIPRoute(sourceIP, nextHopIP, false))
 }
 
-func (s *Server) DeletePath(path *table.Path) {
+func (s *Server) DeleteRoute(source, nextHop string) error {
+	sourceIP := net.ParseIP(source)
+	nextHopIP := net.ParseIP(nextHop)
+
+	if sourceIP == nil {
+		return fmt.Errorf("Error adding route. Source %s is not an IP,", source)
+	}
+
+	if nextHopIP == nil {
+		return fmt.Errorf("Error adding route. NextHop %s is not an IP,", nextHop)
+	}
+
+	return s.DeletePath(getExternalIPRoute(sourceIP, nextHopIP, true))
+}
+
+func (s *Server) AddPath(path *table.Path) error {
+	glog.V(3).Infof("Adding Path: %s", path)
+	if _, err := s.bgp.AddPath("", []*table.Path{path}); err != nil {
+		return fmt.Errorf("Oops. Something went wrong adding path: %s", err)
+	}
+
+	s.debug()
+	return nil
+}
+
+func (s *Server) DeletePath(path *table.Path) error {
 	glog.V(3).Infof("Deleting Path: %s", path)
 	if err := s.bgp.DeletePath(nil, bgp.RF_IPv4_UC, "", []*table.Path{path}); err != nil {
-		glog.Errorf("Oops. Something went wrong deleting route: %s", err)
+		return fmt.Errorf("Oops. Something went wrong deleting route: %s", err)
 	}
 	s.debug()
+	return nil
 }
 
 func (s *Server) AddNeighbor(neighbor string) {
@@ -102,7 +134,18 @@ func (s *Server) AddNeighbor(neighbor string) {
 }
 
 func (s *Server) debug() {
-	for _, route := range s.bgp.GetRib() {
+	for _, route := range s.bgp.GetVrf() {
 		glog.V(5).Infof("%s", route)
 	}
+}
+
+func getExternalIPRoute(service, node net.IP, isWithdraw bool) *table.Path {
+	nlri := bgp.NewIPAddrPrefix(uint8(32), service.String())
+
+	pattr := []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
+		bgp.NewPathAttributeNextHop(node.String()),
+	}
+
+	return table.NewPath(nil, nlri, isWithdraw, pattr, time.Now(), false)
 }
