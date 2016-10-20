@@ -2,23 +2,25 @@ package controller
 
 import (
 	"fmt"
-	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang/glog"
 	"github.com/sapcc/kube-parrot/pkg/bgp"
+	"github.com/sapcc/kube-parrot/pkg/forked/util"
 	"github.com/sapcc/kube-parrot/pkg/forked/workqueue"
 	"github.com/sapcc/kube-parrot/pkg/informer"
 	"k8s.io/client-go/1.5/pkg/api/v1"
+	"k8s.io/client-go/1.5/pkg/types"
 	"k8s.io/client-go/1.5/pkg/util/wait"
 	"k8s.io/client-go/1.5/tools/cache"
-	"k8s.io/kubernetes/pkg/types"
 )
 
 const (
 	AnnotationBGPAnnouncement = "parrot.sap.cc/announce"
+	KubeProxyPrefix           = "kube-proxy"
 )
 
 type ExternalServicesController struct {
@@ -28,10 +30,12 @@ type ExternalServicesController struct {
 	serviceStore  *informer.StoreToServiceLister
 	endpointStore *informer.StoreToEndpointsLister
 	nodeStore     *informer.StoreToNodeLister
+	podStore      *informer.StoreToPodLister
 
 	serviceStoreSynced  cache.InformerSynced
 	endpointStoreSynced cache.InformerSynced
 	nodeStoreSynced     cache.InformerSynced
+	podStoreSynced      cache.InformerSynced
 }
 
 type Operation int
@@ -49,7 +53,7 @@ type Command struct {
 func NewExternalServicesController(
 	endpointInformer informer.EndpointInformer,
 	serviceInformer informer.ServiceInformer,
-	nodeInformer informer.NodeInformer,
+	podInformer informer.PodInformer,
 	bgp *bgp.Server) *ExternalServicesController {
 
 	c := &ExternalServicesController{
@@ -61,8 +65,8 @@ func NewExternalServicesController(
 		endpointStoreSynced: endpointInformer.Informer().HasSynced,
 		serviceStore:        serviceInformer.Lister(),
 		serviceStoreSynced:  serviceInformer.Informer().HasSynced,
-		nodeStore:           nodeInformer.Lister(),
-		nodeStoreSynced:     nodeInformer.Informer().HasSynced,
+		podStore:            podInformer.Lister(),
+		podStoreSynced:      podInformer.Informer().HasSynced,
 	}
 
 	handlers := cache.ResourceEventHandlerFuncs{
@@ -79,62 +83,9 @@ func NewExternalServicesController(
 
 	endpointInformer.Informer().AddEventHandler(handlers)
 	serviceInformer.Informer().AddEventHandler(handlers)
-	nodeInformer.Informer().AddEventHandler(handlers)
+	podInformer.Informer().AddEventHandler(handlers)
 
 	return c
-}
-
-func (c *ExternalServicesController) findExternalIPsFromService(service *v1.Service) []net.IP {
-	if l, ok := service.Annotations[AnnotationBGPAnnouncement]; ok {
-		announcementRequested, err := strconv.ParseBool(l)
-		if err != nil {
-			glog.Errorf("Failed to parse annotation %v: %v", AnnotationBGPAnnouncement, err)
-			return []net.IP{}
-		}
-
-		if !announcementRequested {
-			glog.V(3).Infof("Skipping service %v. Annotation is set but not true. Huh?", service.GetName())
-			return []net.IP{}
-		}
-	} else {
-		glog.V(3).Infof("Skipping service %v. No announce annotation defined...", service.GetName())
-		return []net.IP{}
-	}
-
-	result := []net.IP{}
-	for _, ip := range service.Spec.ExternalIPs {
-		result = append(result, net.ParseIP(ip))
-	}
-
-	return result
-}
-
-func (c *ExternalServicesController) findExternalIPsFromEndpoint(endpoint *v1.Endpoints) []net.IP {
-	key, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(endpoint)
-
-	serviceObj, exists, err := c.serviceStore.Indexer.GetByKey(key)
-	if err != nil || !exists {
-		glog.V(3).Infof("Service does not exist anymore. Doing nothing.: %v", key)
-		return []net.IP{}
-	}
-	service := serviceObj.(*v1.Service)
-
-	return c.findExternalIPsFromService(service)
-}
-
-func (c *ExternalServicesController) findProxyIPs() []net.IP {
-	nodes, _ := c.nodeStore.List()
-	result := []net.IP{}
-
-	for _, node := range nodes.Items {
-		for _, address := range node.Status.Addresses {
-			if address.Type == v1.NodeInternalIP {
-				result = append(result, net.ParseIP(address.Address))
-			}
-		}
-	}
-
-	return result
 }
 
 func (c *ExternalServicesController) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
@@ -142,7 +93,7 @@ func (c *ExternalServicesController) Run(stopCh <-chan struct{}, wg *sync.WaitGr
 	defer c.queue.ShutDown()
 	wg.Add(1)
 
-	if !cache.WaitForCacheSync(stopCh, c.endpointStoreSynced, c.serviceStoreSynced, c.nodeStoreSynced) {
+	if !cache.WaitForCacheSync(stopCh, c.endpointStoreSynced, c.serviceStoreSynced, c.podStoreSynced) {
 		return
 	}
 	go wait.Until(c.worker, time.Second, stopCh)
@@ -156,7 +107,7 @@ func (c *ExternalServicesController) worker() {
 }
 
 func (c *ExternalServicesController) processNextWorkItem() bool {
-	// pull the next work item from queue.  It should be a key we use to lookup something in a cache
+	// pull the next work item from queue.
 	obj, quit := c.queue.Get()
 	if quit {
 		return false
@@ -184,14 +135,6 @@ func (c *ExternalServicesController) processNextWorkItem() bool {
 
 func (c *ExternalServicesController) executeCommand(command Command) error {
 	switch command.resource.(type) {
-	case *v1.Node:
-		node := command.resource.(*v1.Node)
-		switch command.Op {
-		case ADD:
-			c.routes.OnNodeAdd(node)
-		case DEL:
-			c.routes.OnNodeDelete(node)
-		}
 	case *v1.Endpoints:
 		endpoints := command.resource.(*v1.Endpoints)
 		switch command.Op {
@@ -208,6 +151,14 @@ func (c *ExternalServicesController) executeCommand(command Command) error {
 		case DEL:
 			c.routes.OnServiceDelete(service)
 		}
+	case *v1.Pod:
+		pod := command.resource.(*v1.Pod)
+		switch command.Op {
+		case ADD:
+			c.routes.OnPodAdd(pod)
+		case DEL:
+			c.routes.OnPodDelete(pod)
+		}
 	}
 
 	return c.routes.reconcile()
@@ -216,14 +167,14 @@ func (c *ExternalServicesController) executeCommand(command Command) error {
 type RoutesConfig struct {
 	bgp       *bgp.Server
 	routes    map[Route]Route
-	nodes     map[string]*v1.Node
 	services  map[types.NamespacedName]*v1.Service
 	endpoints map[types.NamespacedName]*v1.Endpoints
+	proxies   map[types.NamespacedName]*v1.Pod
 }
 
 type Route struct {
 	Service    types.NamespacedName
-	Node       string
+	Proxy      types.NamespacedName
 	externalIP string
 	nextHop    string
 }
@@ -232,40 +183,30 @@ func NewRoutesConfig(bgp *bgp.Server) *RoutesConfig {
 	return &RoutesConfig{
 		bgp:       bgp,
 		routes:    map[Route]Route{},
-		nodes:     map[string]*v1.Node{},
 		services:  map[types.NamespacedName]*v1.Service{},
 		endpoints: map[types.NamespacedName]*v1.Endpoints{},
+		proxies:   map[types.NamespacedName]*v1.Pod{},
 	}
 }
 
 func (c *RoutesConfig) deleteRoute(route Route) error {
-	fmt.Printf("Withdrawing %s on %s: %s --> %s\n", route.Service, route.Node, route.externalIP, route.nextHop)
+	fmt.Printf("Withdrawing %s on %s: %s --> %s\n", route.Service, route.Proxy, route.externalIP, route.nextHop)
 	if err := c.bgp.DeleteRoute(route.externalIP, route.nextHop); err != nil {
-		return fmt.Errorf("Failed to delte route %v -> %v. Withdrawal failed: %v", route.Service, route.Node, err)
+		return fmt.Errorf("Failed to delte route %v -> %v. Withdrawal failed: %v", route.Service, route.Proxy, err)
 	}
 	delete(c.routes, route)
 	return nil
 }
 
-func (c *RoutesConfig) addRoute(service *v1.Service, node *v1.Node) error {
+func (c *RoutesConfig) addRoute(service *v1.Service, proxy *v1.Pod) error {
 	serviceName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+	proxyName := types.NamespacedName{Namespace: proxy.Namespace, Name: proxy.Name}
 
-	nodeInternalIP := ""
-	for _, address := range node.Status.Addresses {
-		if address.Type == v1.NodeInternalIP {
-			nodeInternalIP = address.Address
-		}
-	}
-
-	if nodeInternalIP == "" {
-		return fmt.Errorf("Failed to add route %v -> %v: Couldn't get internal Node IP", serviceName, node.Name)
-	}
-
-	route := Route{serviceName, node.Name, service.Spec.ExternalIPs[0], nodeInternalIP}
+	route := Route{serviceName, proxyName, service.Spec.ExternalIPs[0], proxy.Status.HostIP}
 	if _, ok := c.routes[route]; !ok {
-		fmt.Printf("Announcing %s on %s: %s --> %s\n", route.Service, route.Node, route.externalIP, route.nextHop)
+		fmt.Printf("Announcing %s on %s: %s --> %s\n", route.Service, route.Proxy, route.externalIP, route.nextHop)
 		if err := c.bgp.AddRoute(route.externalIP, route.nextHop); err != nil {
-			return fmt.Errorf("Failed to add route %v -> %v. Announcement failed: %v", serviceName, node.Name, err)
+			return fmt.Errorf("Failed to add route %v -> %v. Announcement failed: %v", serviceName, proxyName, err)
 		}
 		c.routes[route] = route
 	}
@@ -273,12 +214,22 @@ func (c *RoutesConfig) addRoute(service *v1.Service, node *v1.Node) error {
 	return nil
 }
 
-func (c *RoutesConfig) OnNodeDelete(node *v1.Node) {
-	delete(c.nodes, node.Name)
+func (c *RoutesConfig) OnPodDelete(pod *v1.Pod) {
+	podName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
+	delete(c.proxies, podName)
 }
 
-func (c *RoutesConfig) OnNodeAdd(node *v1.Node) {
-	c.nodes[node.Name] = node
+func (c *RoutesConfig) OnPodAdd(pod *v1.Pod) {
+	if !strings.HasPrefix(pod.Name, KubeProxyPrefix) {
+		return
+	}
+
+	podName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
+	if util.IsPodReady(pod) {
+		c.proxies[podName] = pod
+	} else {
+		delete(c.proxies, podName)
+	}
 }
 
 func (c *RoutesConfig) OnServiceDelete(service *v1.Service) {
@@ -337,7 +288,7 @@ func (c *RoutesConfig) OnEndpointsAdd(endpoints *v1.Endpoints) {
 
 func (c *RoutesConfig) reconcile() error {
 	for _, route := range c.routes {
-		if _, ok := c.nodes[route.Node]; !ok {
+		if _, ok := c.proxies[route.Proxy]; !ok {
 			if err := c.deleteRoute(route); err != nil {
 				return err
 			}
@@ -357,11 +308,11 @@ func (c *RoutesConfig) reconcile() error {
 		}
 	}
 
-	for _, node := range c.nodes {
+	for _, proxy := range c.proxies {
 		for _, service := range c.services {
 			serviceName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
 			if _, ok := c.endpoints[serviceName]; ok {
-				if err := c.addRoute(service, node); err != nil {
+				if err := c.addRoute(service, proxy); err != nil {
 					return err
 				}
 			}

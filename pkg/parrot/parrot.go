@@ -49,7 +49,7 @@ func New(opts Options) *Parrot {
 		controller.NewExternalServicesController(
 			parrot.informerFactory.Endpoints(),
 			parrot.informerFactory.Services(),
-			parrot.informerFactory.Nodes(),
+			parrot.informerFactory.Pods(),
 			parrot.bgp,
 		)
 

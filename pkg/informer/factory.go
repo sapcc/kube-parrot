@@ -15,6 +15,7 @@ type SharedInformerFactory interface {
 	Services() ServiceInformer
 	Nodes() NodeInformer
 	Endpoints() EndpointInformer
+	Pods() PodInformer
 }
 
 type sharedInformerFactory struct {
