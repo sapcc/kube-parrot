@@ -31,7 +31,7 @@ type Parrot struct {
 	informerFactory informer.SharedInformerFactory
 
 	bgp             *bgp.Server
-	podSubnets      *controller.PodSubnetsController
+	//podSubnets      *controller.PodSubnetsController
 	externalSevices *controller.ExternalServicesController
 }
 
@@ -43,7 +43,7 @@ func New(opts Options) *Parrot {
 	}
 
 	parrot.informerFactory = informer.NewSharedInformerFactory(parrot.client, 5*time.Minute)
-	parrot.podSubnets = controller.NewPodSubnetsController(parrot.client, parrot.bgp)
+	//parrot.podSubnets = controller.NewPodSubnetsController(parrot.client, parrot.bgp)
 
 	parrot.externalSevices =
 		controller.NewExternalServicesController(

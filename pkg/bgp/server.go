@@ -6,6 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/client-go/1.5/pkg/api/v1"
+	"k8s.io/client-go/1.5/tools/cache"
+
 	"github.com/golang/glog"
 	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/config"
@@ -21,13 +24,36 @@ type Server struct {
 	as           uint32
 	routerId     string
 	localAddress string
+
+	Routes *StoreToRouteLister
 }
+
+type RouteCategory int
+
+type Route struct {
+	Category   RouteCategory
+	SourceCIDR string
+	NextHop    string
+	Source     interface{}
+	Target     interface{}
+}
+
+type StoreToRouteLister struct {
+	cache.Store
+}
+
+const (
+	EXTERNAL_IP RouteCategory = iota
+	PODSUBNET
+	APISERVER
+)
 
 func NewServer(localAddress net.IP, as int, port int) *Server {
 	server := &Server{
 		localAddress: localAddress.String(),
 		routerId:     localAddress.String(),
 		as:           uint32(as),
+		Routes:       &StoreToRouteLister{cache.NewStore(RouteKeyFunc)},
 	}
 
 	server.bgp = gobgp.NewBgpServer()
@@ -37,6 +63,22 @@ func NewServer(localAddress net.IP, as int, port int) *Server {
 	)
 
 	return server
+}
+
+func NewExternalIPRoute(service *v1.Service, proxy *v1.Pod) Route {
+	return Route{
+		Category:   EXTERNAL_IP,
+		SourceCIDR: fmt.Sprintf("%s/32", proxy.Status.HostIP),
+		NextHop:    service.Spec.ExternalIPs[0],
+		Source:     service,
+		Target:     proxy,
+	}
+}
+
+func (r Route) String() string {
+	source, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(r.Source)
+	target, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(r.Target)
+	return fmt.Sprintf("%s -> %s (%s -> %s)", r.SourceCIDR, r.NextHop, source, target)
 }
 
 func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
@@ -68,6 +110,11 @@ func (s *Server) startServer() {
 	if err := s.bgp.Start(global); err != nil {
 		glog.Errorf("Oops. Something went wrong starting bgp server: %s", err)
 	}
+}
+
+func RouteKeyFunc(obj interface{}) (string, error) {
+	route := obj.(Route)
+	return fmt.Sprintf("%s/%s->%s", route.Category, route.SourceCIDR, route.NextHop), nil
 }
 
 func (s *Server) AddRoute(source, nextHop string) error {
@@ -148,4 +195,14 @@ func getExternalIPRoute(service, node net.IP, isWithdraw bool) *table.Path {
 	}
 
 	return table.NewPath(nil, nlri, isWithdraw, pattr, time.Now(), false)
+}
+
+func (s *StoreToRouteLister) List(category RouteCategory) (routes []Route) {
+	for _, m := range s.Store.List() {
+		route := *(m.(*Route))
+		if route.Category == category {
+			routes = append(routes, route)
+		}
+	}
+	return routes
 }

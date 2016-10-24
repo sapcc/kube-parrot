@@ -13,7 +13,6 @@ import (
 	"github.com/sapcc/kube-parrot/pkg/forked/util"
 	"github.com/sapcc/kube-parrot/pkg/forked/workqueue"
 	"k8s.io/client-go/1.5/pkg/api/v1"
-	"k8s.io/client-go/1.5/pkg/types"
 	"k8s.io/client-go/1.5/pkg/util/wait"
 	"k8s.io/client-go/1.5/tools/cache"
 )
@@ -24,66 +23,53 @@ const (
 )
 
 type ExternalServicesController struct {
-	routes *RoutesConfig
-	queue  workqueue.RateLimitingInterface
+	queue workqueue.RateLimitingInterface
 
-	serviceStore  *informer.StoreToServiceLister
-	endpointStore *informer.StoreToEndpointsLister
-	nodeStore     *informer.StoreToNodeLister
-	podStore      *informer.StoreToPodLister
+	bgp *bgp.Server
 
-	serviceStoreSynced  cache.InformerSynced
-	endpointStoreSynced cache.InformerSynced
-	nodeStoreSynced     cache.InformerSynced
-	podStoreSynced      cache.InformerSynced
+	services  cache.Store
+	endpoints cache.Store
+	proxies   cache.Store
+
+	waitForCacheSync func(stopCh <-chan struct{})
 }
 
-type Operation int
-
-const (
-	ADD Operation = iota
-	DEL
-)
-
-type Command struct {
-	resource interface{}
-	Op       Operation
-}
-
-func NewExternalServicesController(
-	endpointInformer informer.EndpointInformer,
-	serviceInformer informer.ServiceInformer,
-	podInformer informer.PodInformer,
+func NewExternalServicesController(endpointInformer informer.EndpointInformer,
+	serviceInformer informer.ServiceInformer, podInformer informer.PodInformer,
 	bgp *bgp.Server) *ExternalServicesController {
 
 	c := &ExternalServicesController{
-		routes: NewRoutesConfig(bgp),
-		queue: workqueue.NewNamedRateLimitingQueue(
-			workqueue.DefaultControllerRateLimiter(),
-			"externalips"),
-		endpointStore:       endpointInformer.Lister(),
-		endpointStoreSynced: endpointInformer.Informer().HasSynced,
-		serviceStore:        serviceInformer.Lister(),
-		serviceStoreSynced:  serviceInformer.Informer().HasSynced,
-		podStore:            podInformer.Lister(),
-		podStoreSynced:      podInformer.Informer().HasSynced,
+		bgp: bgp,
+
+		services:  cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
+		endpoints: cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
+		proxies:   cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
+
+		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "externalips"),
 	}
 
-	handlers := cache.ResourceEventHandlerFuncs{
-		AddFunc: func(cur interface{}) {
-			c.queue.Add(Command{cur, ADD})
-		},
-		UpdateFunc: func(old, cur interface{}) {
-			c.queue.Add(Command{cur, ADD})
-		},
-		DeleteFunc: func(cur interface{}) {
-			c.queue.Add(Command{cur, DEL})
-		},
+	c.waitForCacheSync = func(stopCh <-chan struct{}) {
+		cache.WaitForCacheSync(stopCh, serviceInformer.Informer().HasSynced,
+			endpointInformer.Informer().HasSynced, podInformer.Informer().HasSynced)
 	}
 
-	endpointInformer.Informer().AddEventHandler(handlers)
-	serviceInformer.Informer().AddEventHandler(handlers)
-	podInformer.Informer().AddEventHandler(handlers)
+	endpointInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    c.endpointsAdd,
+		UpdateFunc: c.endpointsUpdate,
+		DeleteFunc: c.endpointsDelete,
+	})
+
+	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    c.podAdd,
+		UpdateFunc: c.podUpdate,
+		DeleteFunc: c.podDelete,
+	})
+
+	serviceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    c.serviceAdd,
+		UpdateFunc: c.serviceUpdate,
+		DeleteFunc: c.serviceDelete,
+	})
 
 	return c
 }
@@ -93,9 +79,8 @@ func (c *ExternalServicesController) Run(stopCh <-chan struct{}, wg *sync.WaitGr
 	defer c.queue.ShutDown()
 	wg.Add(1)
 
-	if !cache.WaitForCacheSync(stopCh, c.endpointStoreSynced, c.serviceStoreSynced, c.podStoreSynced) {
-		return
-	}
+	c.waitForCacheSync(stopCh)
+
 	go wait.Until(c.worker, time.Second, stopCh)
 
 	<-stopCh
@@ -107,137 +92,84 @@ func (c *ExternalServicesController) worker() {
 }
 
 func (c *ExternalServicesController) processNextWorkItem() bool {
-	// pull the next work item from queue.
 	obj, quit := c.queue.Get()
 	if quit {
 		return false
 	}
-	cmd := obj.(Command)
 
-	// you always have to indicate to the queue that you've completed a piece of work
-	defer c.queue.Done(cmd)
+	defer c.queue.Done(obj)
 
-	// do your work on the key.  This method will contains your "do stuff" logic"
-	err := c.executeCommand(cmd)
-
-	// there was a failure so be sure to report it.  This method allows for pluggable error handling
-	// which can be used for things like cluster-monitoring
-	if err == nil {
-		c.queue.Forget(cmd)
+	if c.reconcile() == nil {
+		c.queue.Forget(obj)
 		return true
 	}
 
-	glog.Errorf("Failed to execute command %s: %v", cmd, err)
-	c.queue.AddRateLimited(cmd)
-
+	c.queue.AddRateLimited(obj)
 	return true
 }
 
-func (c *ExternalServicesController) executeCommand(command Command) error {
-	switch command.resource.(type) {
-	case *v1.Endpoints:
-		endpoints := command.resource.(*v1.Endpoints)
-		switch command.Op {
-		case ADD:
-			c.routes.OnEndpointsAdd(endpoints)
-		case DEL:
-			c.routes.OnEndpointsDelete(endpoints)
-		}
-	case *v1.Service:
-		service := command.resource.(*v1.Service)
-		switch command.Op {
-		case ADD:
-			c.routes.OnServiceAdd(service)
-		case DEL:
-			c.routes.OnServiceDelete(service)
-		}
-	case *v1.Pod:
-		pod := command.resource.(*v1.Pod)
-		switch command.Op {
-		case ADD:
-			c.routes.OnPodAdd(pod)
-		case DEL:
-			c.routes.OnPodDelete(pod)
-		}
-	}
-
-	return c.routes.reconcile()
+func (c *ExternalServicesController) setDirty() {
+	c.queue.AddRateLimited("dirty")
 }
 
-type RoutesConfig struct {
-	bgp       *bgp.Server
-	routes    map[Route]Route
-	services  map[types.NamespacedName]*v1.Service
-	endpoints map[types.NamespacedName]*v1.Endpoints
-	proxies   map[types.NamespacedName]*v1.Pod
-}
-
-type Route struct {
-	Service    types.NamespacedName
-	Proxy      types.NamespacedName
-	externalIP string
-	nextHop    string
-}
-
-func NewRoutesConfig(bgp *bgp.Server) *RoutesConfig {
-	return &RoutesConfig{
-		bgp:       bgp,
-		routes:    map[Route]Route{},
-		services:  map[types.NamespacedName]*v1.Service{},
-		endpoints: map[types.NamespacedName]*v1.Endpoints{},
-		proxies:   map[types.NamespacedName]*v1.Pod{},
-	}
-}
-
-func (c *RoutesConfig) deleteRoute(route Route) error {
-	fmt.Printf("Withdrawing %s on %s: %s --> %s\n", route.Service, route.Proxy, route.externalIP, route.nextHop)
-	if err := c.bgp.DeleteRoute(route.externalIP, route.nextHop); err != nil {
-		return fmt.Errorf("Failed to delte route %v -> %v. Withdrawal failed: %v", route.Service, route.Proxy, err)
-	}
-	delete(c.routes, route)
-	return nil
-}
-
-func (c *RoutesConfig) addRoute(service *v1.Service, proxy *v1.Pod) error {
-	serviceName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
-	proxyName := types.NamespacedName{Namespace: proxy.Namespace, Name: proxy.Name}
-
-	route := Route{serviceName, proxyName, service.Spec.ExternalIPs[0], proxy.Status.HostIP}
-	if _, ok := c.routes[route]; !ok {
-		fmt.Printf("Announcing %s on %s: %s --> %s\n", route.Service, route.Proxy, route.externalIP, route.nextHop)
-		if err := c.bgp.AddRoute(route.externalIP, route.nextHop); err != nil {
-			return fmt.Errorf("Failed to add route %v -> %v. Announcement failed: %v", serviceName, proxyName, err)
-		}
-		c.routes[route] = route
+func (c *ExternalServicesController) deleteRoute(route bgp.Route) error {
+	if _, exists, _ := c.bgp.Routes.Get(route); exists {
+		fmt.Printf("Withdrawing %s\n", route)
+		return c.bgp.Routes.Delete(route)
 	}
 
 	return nil
 }
 
-func (c *RoutesConfig) OnPodDelete(pod *v1.Pod) {
-	podName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-	delete(c.proxies, podName)
+func (c *ExternalServicesController) addRoute(service *v1.Service, proxy *v1.Pod) error {
+	route := bgp.NewExternalIPRoute(service, proxy)
+
+	if _, exists, _ := c.bgp.Routes.Get(route); !exists {
+		fmt.Printf("Announcing %s\n", route)
+		return c.bgp.Routes.Add(route)
+	}
+
+	return nil
 }
 
-func (c *RoutesConfig) OnPodAdd(pod *v1.Pod) {
+func (c *ExternalServicesController) podDelete(pod interface{}) {
+	if _, exists, _ := c.proxies.Get(pod); exists {
+		c.proxies.Delete(pod)
+		c.setDirty()
+	}
+}
+
+func (c *ExternalServicesController) podAdd(obj interface{}) {
+	pod := obj.(*v1.Pod)
 	if !strings.HasPrefix(pod.Name, KubeProxyPrefix) {
 		return
 	}
 
-	podName := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
 	if util.IsPodReady(pod) {
-		c.proxies[podName] = pod
+		if _, exists, _ := c.proxies.Get(pod); !exists {
+			c.proxies.Add(pod)
+			c.setDirty()
+		}
 	} else {
-		delete(c.proxies, podName)
+		if _, exists, _ := c.proxies.Get(pod); exists {
+			c.proxies.Delete(pod)
+			c.setDirty()
+		}
 	}
+
 }
 
-func (c *RoutesConfig) OnServiceDelete(service *v1.Service) {
-	serviceName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
-	delete(c.services, serviceName)
+func (c *ExternalServicesController) podUpdate(old, cur interface{}) {
+	c.podAdd(cur)
 }
 
-func (c *RoutesConfig) OnServiceAdd(service *v1.Service) {
+func (c *ExternalServicesController) serviceDelete(service interface{}) {
+	c.services.Delete(service)
+	c.setDirty()
+}
+
+func (c *ExternalServicesController) serviceAdd(obj interface{}) {
+	service := obj.(*v1.Service)
 	if l, ok := service.Annotations[AnnotationBGPAnnouncement]; ok {
 		announcementRequested, err := strconv.ParseBool(l)
 		if err != nil {
@@ -259,17 +191,25 @@ func (c *RoutesConfig) OnServiceAdd(service *v1.Service) {
 		return
 	}
 
-	serviceName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
-	c.services[serviceName] = service
+	if _, exists, _ := c.services.Get(service); !exists {
+		c.services.Add(service)
+		c.setDirty()
+	}
 }
 
-func (c *RoutesConfig) OnEndpointsDelete(endpoints *v1.Endpoints) {
-	endpointsName := types.NamespacedName{Namespace: endpoints.Namespace, Name: endpoints.Name}
-	delete(c.endpoints, endpointsName)
+func (c *ExternalServicesController) serviceUpdate(old, cur interface{}) {
+	c.serviceAdd(cur)
 }
 
-func (c *RoutesConfig) OnEndpointsAdd(endpoints *v1.Endpoints) {
-	endpointsName := types.NamespacedName{Namespace: endpoints.Namespace, Name: endpoints.Name}
+func (c *ExternalServicesController) endpointsDelete(endpoints interface{}) {
+	if _, exists, _ := c.endpoints.Get(endpoints); exists {
+		c.endpoints.Delete(endpoints)
+		c.setDirty()
+	}
+}
+
+func (c *ExternalServicesController) endpointsAdd(obj interface{}) {
+	endpoints := obj.(*v1.Endpoints)
 
 	ready := false
 	for _, v := range endpoints.Subsets {
@@ -280,39 +220,47 @@ func (c *RoutesConfig) OnEndpointsAdd(endpoints *v1.Endpoints) {
 	}
 
 	if ready {
-		c.endpoints[endpointsName] = endpoints
+		if _, exists, _ := c.endpoints.Get(endpoints); !exists {
+			c.endpoints.Add(endpoints)
+			c.setDirty()
+		}
 	} else {
-		delete(c.endpoints, endpointsName)
+		if _, exists, _ := c.endpoints.Get(endpoints); exists {
+			c.endpoints.Delete(endpoints)
+			c.setDirty()
+		}
 	}
 }
 
-func (c *RoutesConfig) reconcile() error {
-	for _, route := range c.routes {
-		if _, ok := c.proxies[route.Proxy]; !ok {
+func (c *ExternalServicesController) endpointsUpdate(old, cur interface{}) {
+	c.endpointsAdd(cur)
+}
+
+func (c *ExternalServicesController) reconcile() error {
+	for _, route := range c.bgp.Routes.List(bgp.EXTERNAL_IP) {
+		if _, ok, _ := c.proxies.Get(route.Target); !ok {
 			if err := c.deleteRoute(route); err != nil {
 				return err
 			}
 		}
 
-		serviceName := types.NamespacedName{Namespace: route.Service.Namespace, Name: route.Service.Name}
-		if _, ok := c.services[serviceName]; !ok {
+		if _, ok, _ := c.services.Get(route.Source); !ok {
 			if err := c.deleteRoute(route); err != nil {
 				return err
 			}
 		}
 
-		if _, ok := c.endpoints[serviceName]; !ok {
+		if _, ok, _ := c.endpoints.Get(route.Source); !ok {
 			if err := c.deleteRoute(route); err != nil {
 				return err
 			}
 		}
 	}
 
-	for _, proxy := range c.proxies {
-		for _, service := range c.services {
-			serviceName := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
-			if _, ok := c.endpoints[serviceName]; ok {
-				if err := c.addRoute(service, proxy); err != nil {
+	for _, proxy := range c.proxies.List() {
+		for _, service := range c.services.List() {
+			if _, ok, _ := c.endpoints.Get(service); ok {
+				if err := c.addRoute(service.(*v1.Service), proxy.(*v1.Pod)); err != nil {
 					return err
 				}
 			}
