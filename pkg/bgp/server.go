@@ -68,8 +68,8 @@ func NewServer(localAddress net.IP, as int, port int) *Server {
 func NewExternalIPRoute(service *v1.Service, proxy *v1.Pod) Route {
 	return Route{
 		Category:   EXTERNAL_IP,
-		SourceCIDR: fmt.Sprintf("%s/32", proxy.Status.HostIP),
-		NextHop:    service.Spec.ExternalIPs[0],
+		SourceCIDR: fmt.Sprintf("%s/32", service.Spec.ExternalIPs[0]),
+		NextHop:    proxy.Status.HostIP,
 		Source:     service,
 		Target:     proxy,
 	}
@@ -78,7 +78,17 @@ func NewExternalIPRoute(service *v1.Service, proxy *v1.Pod) Route {
 func (r Route) String() string {
 	source, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(r.Source)
 	target, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(r.Target)
-	return fmt.Sprintf("%s -> %s (%s -> %s)", r.SourceCIDR, r.NextHop, source, target)
+	category := ""
+
+	switch r.Category {
+	case EXTERNAL_IP:
+		category = "ExternalIP:"
+	case PODSUBNET:
+		category = "PodSubnet:"
+	case APISERVER:
+		category = "APIServer:"
+	}
+	return fmt.Sprintf("%18s -> %-15s (%s %s -> %s)", r.SourceCIDR, r.NextHop, category, source, target)
 }
 
 func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
