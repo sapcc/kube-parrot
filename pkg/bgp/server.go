@@ -6,15 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/client-go/1.5/pkg/api/v1"
-	"k8s.io/client-go/1.5/tools/cache"
-
 	"github.com/golang/glog"
 	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/config"
-	"github.com/osrg/gobgp/packet/bgp"
 	gobgp "github.com/osrg/gobgp/server"
-	"github.com/osrg/gobgp/table"
 )
 
 type Server struct {
@@ -25,35 +20,17 @@ type Server struct {
 	routerId     string
 	localAddress string
 
-	Routes *StoreToRouteLister
+	ExternalIPRoutes    *ExternalIPRoutesStore
+	NodePodSubnetRoutes *NodePodSubnetRoutesStore
 }
-
-type RouteCategory int
-
-type Route struct {
-	Category   RouteCategory
-	SourceCIDR string
-	NextHop    string
-	Source     interface{}
-	Target     interface{}
-}
-
-type StoreToRouteLister struct {
-	cache.Store
-}
-
-const (
-	EXTERNAL_IP RouteCategory = iota
-	PODSUBNET
-	APISERVER
-)
 
 func NewServer(localAddress net.IP, as int, port int) *Server {
 	server := &Server{
-		localAddress: localAddress.String(),
-		routerId:     localAddress.String(),
-		as:           uint32(as),
-		Routes:       &StoreToRouteLister{cache.NewStore(RouteKeyFunc)},
+		localAddress:        localAddress.String(),
+		routerId:            localAddress.String(),
+		as:                  uint32(as),
+		ExternalIPRoutes:    newExternalIPRoutesStore(),
+		NodePodSubnetRoutes: newNodePodSubnetRoutesStore(),
 	}
 
 	server.bgp = gobgp.NewBgpServer()
@@ -63,32 +40,6 @@ func NewServer(localAddress net.IP, as int, port int) *Server {
 	)
 
 	return server
-}
-
-func NewExternalIPRoute(service *v1.Service, proxy *v1.Pod) Route {
-	return Route{
-		Category:   EXTERNAL_IP,
-		SourceCIDR: fmt.Sprintf("%s/32", service.Spec.ExternalIPs[0]),
-		NextHop:    proxy.Status.HostIP,
-		Source:     service,
-		Target:     proxy,
-	}
-}
-
-func (r Route) String() string {
-	source, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(r.Source)
-	target, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(r.Target)
-	category := ""
-
-	switch r.Category {
-	case EXTERNAL_IP:
-		category = "ExternalIP:"
-	case PODSUBNET:
-		category = "PodSubnet:"
-	case APISERVER:
-		category = "APIServer:"
-	}
-	return fmt.Sprintf("%18s -> %-15s (%s %s -> %s)", r.SourceCIDR, r.NextHop, category, source, target)
 }
 
 func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
@@ -122,60 +73,6 @@ func (s *Server) startServer() {
 	}
 }
 
-func RouteKeyFunc(obj interface{}) (string, error) {
-	route := obj.(Route)
-	return fmt.Sprintf("%s/%s->%s", route.Category, route.SourceCIDR, route.NextHop), nil
-}
-
-func (s *Server) AddRoute(source, nextHop string) error {
-	sourceIP := net.ParseIP(source)
-	nextHopIP := net.ParseIP(nextHop)
-
-	if sourceIP == nil {
-		return fmt.Errorf("Error adding route. Source %s is not an IP,", source)
-	}
-
-	if nextHopIP == nil {
-		return fmt.Errorf("Error adding route. NextHop %s is not an IP,", nextHop)
-	}
-
-	return s.AddPath(getExternalIPRoute(sourceIP, nextHopIP, false))
-}
-
-func (s *Server) DeleteRoute(source, nextHop string) error {
-	sourceIP := net.ParseIP(source)
-	nextHopIP := net.ParseIP(nextHop)
-
-	if sourceIP == nil {
-		return fmt.Errorf("Error adding route. Source %s is not an IP,", source)
-	}
-
-	if nextHopIP == nil {
-		return fmt.Errorf("Error adding route. NextHop %s is not an IP,", nextHop)
-	}
-
-	return s.DeletePath(getExternalIPRoute(sourceIP, nextHopIP, true))
-}
-
-func (s *Server) AddPath(path *table.Path) error {
-	glog.V(3).Infof("Adding Path: %s", path)
-	if _, err := s.bgp.AddPath("", []*table.Path{path}); err != nil {
-		return fmt.Errorf("Oops. Something went wrong adding path: %s", err)
-	}
-
-	s.debug()
-	return nil
-}
-
-func (s *Server) DeletePath(path *table.Path) error {
-	glog.V(3).Infof("Deleting Path: %s", path)
-	if err := s.bgp.DeletePath(nil, bgp.RF_IPv4_UC, "", []*table.Path{path}); err != nil {
-		return fmt.Errorf("Oops. Something went wrong deleting route: %s", err)
-	}
-	s.debug()
-	return nil
-}
-
 func (s *Server) AddNeighbor(neighbor string) {
 	glog.Infof("Adding Neighbor: %s", neighbor)
 	n := &config.Neighbor{
@@ -196,23 +93,42 @@ func (s *Server) debug() {
 	}
 }
 
-func getExternalIPRoute(service, node net.IP, isWithdraw bool) *table.Path {
-	nlri := bgp.NewIPAddrPrefix(uint8(32), service.String())
+//func (c *Server) AddPodSubnetRoute(node *v1.Node) error {
+//  route := NewNodePodSubnetRoute(node)
 
-	pattr := []bgp.PathAttributeInterface{
-		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
-		bgp.NewPathAttributeNextHop(node.String()),
-	}
+//  if _, exists, _ := c.NodePodSubnetRoutes.Get(route); !exists {
+//    fmt.Printf("Announcing %s\n", route)
+//    return c.NodePodSubnetRoutes.Add(route)
+//  }
 
-	return table.NewPath(nil, nlri, isWithdraw, pattr, time.Now(), false)
-}
+//  return nil
+//}
 
-func (s *StoreToRouteLister) List(category RouteCategory) (routes []Route) {
-	for _, m := range s.Store.List() {
-		route := *(m.(*Route))
-		if route.Category == category {
-			routes = append(routes, route)
-		}
-	}
-	return routes
-}
+//func (c *Server) AddExternalIPRoute(service *v1.Service, proxy *v1.Pod) error {
+//  route := NewExternalIPRoute(service, proxy)
+
+//  if _, exists, _ := c.ExternalIPRoutes.Get(route); !exists {
+//    fmt.Printf("Announcing %s\n", route)
+//    return c.ExternalIPRoutes.Add(route)
+//  }
+
+//  return nil
+//}
+
+//func (c *Server) DeleteExternalIPRoute(route ExternalIPRoute) error {
+//  if _, exists, _ := c.ExternalIPRoutes.Get(route); exists {
+//    fmt.Printf("Withdrawing %s\n", route)
+//    return c.ExternalIPRoutes.Delete(route)
+//  }
+
+//  return nil
+//}
+
+//func (c *Server) DeleteNodePodSubnetRoute(route NodePodSubnetRoute) error {
+//  if _, exists, _ := c.NodePodSubnetRoutes.Get(route); exists {
+//    fmt.Printf("Withdrawing %s\n", route)
+//    return c.NodePodSubnetRoutes.Delete(route)
+//  }
+
+//  return nil
+//}

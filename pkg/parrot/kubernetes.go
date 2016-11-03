@@ -1,4 +1,4 @@
-package kubernetes
+package parrot
 
 import (
 	"github.com/golang/glog"

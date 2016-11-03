@@ -9,8 +9,8 @@ import (
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
-	client "github.com/sapcc/kube-parrot/pkg/kubernetes"
 	"k8s.io/client-go/1.5/kubernetes"
+	"k8s.io/client-go/1.5/tools/cache"
 )
 
 var (
@@ -27,39 +27,34 @@ type Options struct {
 type Parrot struct {
 	Options
 
-	client          *kubernetes.Clientset
-	informerFactory informer.SharedInformerFactory
+	client *kubernetes.Clientset
+	bgp    *bgp.Server
 
-	bgp             *bgp.Server
-	//podSubnets      *controller.PodSubnetsController
+	informers informer.SharedInformerFactory
+
+	podSubnets      *controller.PodSubnetsController
 	externalSevices *controller.ExternalServicesController
 }
 
 func New(opts Options) *Parrot {
-	parrot := &Parrot{
+	p := &Parrot{
 		Options: opts,
 		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort),
-		client:  client.NewClient(),
+		client:  NewClient(),
 	}
 
-	parrot.informerFactory = informer.NewSharedInformerFactory(parrot.client, 5*time.Minute)
-	//parrot.podSubnets = controller.NewPodSubnetsController(parrot.client, parrot.bgp)
+	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
+	p.podSubnets = controller.NewPodSubnetsController(p.informers, p.bgp.NodePodSubnetRoutes)
+	p.externalSevices = controller.NewExternalServicesController(p.informers, p.bgp.ExternalIPRoutes)
 
-	parrot.externalSevices =
-		controller.NewExternalServicesController(
-			parrot.informerFactory.Endpoints(),
-			parrot.informerFactory.Services(),
-			parrot.informerFactory.Pods(),
-			parrot.bgp,
-		)
-
-	return parrot
+	return p
 }
 
 func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	fmt.Printf("Welcome to Kubernetes Parrot %v\n", VERSION)
 
 	go p.bgp.Run(stopCh, wg)
+	go p.informers.Start(stopCh)
 
 	// Wait for BGP main loop
 	time.Sleep(1 * time.Second)
@@ -68,8 +63,14 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 		p.bgp.AddNeighbor(neighbor.String())
 	}
 
-	go p.informerFactory.Start(stopCh)
+	cache.WaitForCacheSync(
+		stopCh,
+		p.informers.Endpoints().Informer().HasSynced,
+		p.informers.Nodes().Informer().HasSynced,
+		p.informers.Pods().Informer().HasSynced,
+		p.informers.Services().Informer().HasSynced,
+	)
 
-	//go p.podSubnets.Run(stopCh)
+	go p.podSubnets.Run(stopCh, wg)
 	go p.externalSevices.Run(stopCh, wg)
 }

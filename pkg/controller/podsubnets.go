@@ -1,166 +1,92 @@
 package controller
 
-//import (
-//  "sync"
-//  "time"
+import (
+	"sync"
 
-//  "github.com/golang/glog"
-//  "k8s.io/client-go/1.5/pkg/api/v1"
-//  "k8s.io/client-go/1.5/tools/cache"
-//  "k8s.io/kubernetes/pkg/types"
-//  "k8s.io/kubernetes/pkg/util/wait"
+	"k8s.io/client-go/1.5/pkg/api/v1"
+	"k8s.io/client-go/1.5/tools/cache"
 
-//  "github.com/sapcc/kube-parrot/pkg/bgp"
-//  "github.com/sapcc/kube-parrot/pkg/forked/informer"
-//  "github.com/sapcc/kube-parrot/pkg/forked/workqueue"
-//)
+	"github.com/sapcc/kube-parrot/pkg/bgp"
+	"github.com/sapcc/kube-parrot/pkg/forked/informer"
+	"github.com/sapcc/kube-parrot/pkg/util"
+	"github.com/sapcc/kube-parrot/pkg/types"
+)
 
-//type PodSubnetsController struct {
-//  queue workqueue.RateLimitingInterface
+type PodSubnetsController struct {
+	routes     *bgp.NodePodSubnetRoutesStore
+	nodes      cache.Store
+	reconciler reconciler.DirtyReconcilerInterface
+}
 
-//  nodeStore       *informer.StoreToNodeLister
-//  nodeStoreSynced cache.InformerSynced
+func NewPodSubnetsController(informers informer.SharedInformerFactory,
+	routes *bgp.NodePodSubnetRoutesStore) *PodSubnetsController {
 
-//  bgp *bgp.Server
-//}
+	n := &PodSubnetsController{
+		nodes:  cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
+		routes: routes,
+	}
 
-//func NewPodSubnetsController(nodeInformer informer.NodeInformer, bgp *bgp.Server) *PodSubnetsController {
-//  n := &PodSubnetsController{
-//    nodeStore:       nodeInformer.Lister(),
-//    nodeStoreSynced: nodeInformer.Informer().HasSynced,
-//    bgp:             bgp,
-//  }
+	n.reconciler = reconciler.NewNamedDirtyReconciler("podsubnets", n.reconcile)
 
-//  nodeInformer.Informer().AddEventHandler(
-//    cache.ResourceEventHandlerFuncs{
-//      AddFunc:    n.addNode,
-//      DeleteFunc: n.deleteNode,
-//    },
-//  )
+	informers.Nodes().Informer().AddEventHandler(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc:    n.nodeAdd,
+			UpdateFunc: n.nodeUpdate,
+			DeleteFunc: n.nodeDelete,
+		},
+	)
 
-//  return n
-//}
+	return n
+}
 
-//func (n *PodSubnetsController) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
-//  defer wg.Done()
-//  defer c.queue.ShutDown()
-//  wg.Add(1)
+func (c *PodSubnetsController) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+	wg.Add(1)
 
-//  if !cache.WaitForCacheSync(stopCh, c.nodeStoreSynced) {
-//    return
-//  }
+	c.reconciler.Run(stopCh)
 
-//  go wait.Until(c.worker, time.Second, stopCh)
+	<-stopCh
+}
 
-//  <-stopCh
-//}
+func (c *PodSubnetsController) nodeAdd(obj interface{}) {
+	node := obj.(*v1.Node)
 
-//func (c *PodSubnetsController) worker() {
-//  for c.processNextWorkItem() {
-//  }
-//}
+	if _, ok := node.Annotations[types.AnnotationNodePodSubnet]; !ok {
+		return
+	}
 
-//func (c *PodSubnetsController) processNextWorkItem() bool {
-//  // pull the next work item from queue.
-//  obj, quit := c.queue.Get()
-//  if quit {
-//    return false
-//  }
-//  cmd := obj.(Command)
+	if _, exists, _ := c.nodes.Get(node); !exists {
+		c.nodes.Add(node)
+		c.reconciler.Dirty()
+	}
+}
 
-//  // you always have to indicate to the queue that you've completed a piece of work
-//  defer c.queue.Done(cmd)
+func (c *PodSubnetsController) nodeUpdate(old, cur interface{}) {
+	c.nodeAdd(cur)
+}
 
-//  // do your work on the key.  This method will contains your "do stuff" logic"
-//  err := c.executeCommand(cmd)
+func (c *PodSubnetsController) nodeDelete(obj interface{}) {
+	node := obj.(*v1.Node)
+	if _, exists, _ := c.nodes.Get(node); exists {
+		c.nodes.Delete(node)
+		c.reconciler.Dirty()
+	}
+}
 
-//  // there was a failure so be sure to report it.  This method allows for pluggable error handling
-//  // which can be used for things like cluster-monitoring
-//  if err == nil {
-//    c.queue.Forget(cmd)
-//    return true
-//  }
+func (c *PodSubnetsController) reconcile() error {
+	for _, route := range c.routes.List() {
+		if _, ok, _ := c.nodes.Get(route.Node); !ok {
+			if err := c.routes.Delete(route); err != nil {
+				return err
+			}
+		}
+	}
 
-//  glog.Errorf("Failed to execute command %s: %v", cmd, err)
-//  c.queue.AddRateLimited(cmd)
+	for _, node := range c.nodes.List() {
+		if err := c.routes.Add(node.(*v1.Node)); err != nil {
+			return err
+		}
+	}
 
-//  return true
-//}
-
-//func (c *PodSubnetsController) executeCommand(command Command) error {
-//  switch command.resource.(type) {
-//  case *v1.Node:
-//    node := command.resource.(*v1.Node)
-//    switch command.Op {
-//    case ADD:
-//      c.routes.OnNodeAdd(node)
-//    case DEL:
-//      c.routes.OnNodeDelete(node)
-//    }
-//  }
-
-//  return c.reconcile()
-//}
-
-//type PodSubnetRoutesConfig struct {
-//  bgp    *bgp.Server
-//  routes map[PodSubnetRoute]PodSubnetRoute
-//  nodes  map[types.NamespacedName]*v1.Node
-//}
-
-//type PodSubnetRoute struct {
-//  Node   string
-//  HostIP string
-//  Subnet string
-//}
-
-//func NewPodSubnetRoutesConfig(bgp *bgp.Server) *PodSubnetRoutesConfig {
-//  return &PodSubnetRoutesConfig{
-//    bgp:    bgp,
-//    routes: map[PodSubnetRoutesConfig]PodSubnetRoutesConfig{},
-//    nodes:  map[types.NamespacedName]*v1.Node{},
-//  }
-//}
-
-//func (n *PodSubnetRoutesConfig) OnNodeAdd(node *v1.Node) {
-//  n.nodes[node.Name] = node
-//  //route, err := getPodSubnetRoute(node)
-//  //if err != nil {
-//  //  glog.Warningf("Couldn't add pod subnet for %s: %s", node.GetName(), err)
-//  //  return
-//  //}
-
-//  //fmt.Printf("Adding %s\n", route)
-//  //n.bgp.AddPath(route)
-//}
-
-//func (n *PodSubnetRoutesConfig) OnNodeDelete(node *v1.Node) {
-//  delete(n.nodes, node.Name)
-//}
-
-//func (c *PodSubnetRoutesConfig) reconcile() error {
-//  for _, route := range c.routes {
-//    if _, ok := c.nodes; !ok {
-//      if err := c.deleteRoute(route); err != nil {
-//        return err
-//      }
-//    }
-//  }
-
-//  for _, node := range c.nodes {
-//    if err := c.addRoute(route); err != nil {
-//      return err
-//    }
-//  }
-//}
-
-//func (c *PodSubnetRoutesConfig) deleteRoute(route PodSubnetRoute) error {
-//  fmt.Printf("Withdrawing PodSubnet of %s: %s --> %s\n", route.Node, route.Subnet, route.HostIP)
-//  if err := c.bgp.DeleteRoute(route.externalIP, route.nextHop); err != nil {
-//    return err
-//  }
-//  delete(c.routes, route)
-//  return nil
-//}
-
-
+	return nil
+}
