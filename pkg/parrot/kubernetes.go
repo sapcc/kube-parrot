@@ -22,6 +22,7 @@ func NewClient() *kubernetes.Clientset {
 		glog.Fatalf("Couldn't create Kubernetes client: %s", err)
 	}
 
+
 	glog.V(3).Infof("Using Kubernetes Api at %s", config.Host)
 	return client
 }

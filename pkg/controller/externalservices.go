@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	KubeProxyPrefix = "kube-proxy"
+	KubeProxyNamespace = "kube-system"
+	KubeProxyPrefix    = "kube-proxy"
 )
 
 type ExternalServicesController struct {
@@ -79,7 +80,8 @@ func (c *ExternalServicesController) podDelete(pod interface{}) {
 
 func (c *ExternalServicesController) podAdd(obj interface{}) {
 	pod := obj.(*v1.Pod)
-	if !strings.HasPrefix(pod.Name, KubeProxyPrefix) {
+	if !strings.HasPrefix(pod.Name, KubeProxyPrefix) ||
+		pod.Namespace != KubeProxyNamespace {
 		return
 	}
 
