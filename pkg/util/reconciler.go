@@ -21,6 +21,8 @@ func (c *Type) Run(stopCh <-chan struct{}) {
 	defer c.queue.ShutDown()
 
 	go wait.Until(c.worker, time.Second, stopCh)
+
+	<-stopCh
 }
 
 func (c *Type) worker() {

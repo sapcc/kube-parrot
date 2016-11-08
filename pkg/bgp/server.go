@@ -22,16 +22,19 @@ type Server struct {
 
 	ExternalIPRoutes    *ExternalIPRoutesStore
 	NodePodSubnetRoutes *NodePodSubnetRoutesStore
+	APIServerRoutes     *APIServerRoutesStore
 }
 
-func NewServer(localAddress net.IP, as int, port int) *Server {
+func NewServer(localAddress net.IP, as int, port int, masterIP net.IP) *Server {
 	server := &Server{
-		localAddress:        localAddress.String(),
-		routerId:            localAddress.String(),
-		as:                  uint32(as),
-		ExternalIPRoutes:    newExternalIPRoutesStore(),
-		NodePodSubnetRoutes: newNodePodSubnetRoutesStore(),
+		localAddress: localAddress.String(),
+		routerId:     localAddress.String(),
+		as:           uint32(as),
 	}
+
+	server.ExternalIPRoutes = newExternalIPRoutesStore(server)
+	server.NodePodSubnetRoutes = newNodePodSubnetRoutesStore(server)
+	server.APIServerRoutes = newAPIServerRoutesStore(server, masterIP)
 
 	server.bgp = gobgp.NewBgpServer()
 	server.grpc = api.NewGrpcServer(
@@ -92,43 +95,3 @@ func (s *Server) debug() {
 		glog.V(5).Infof("%s", route)
 	}
 }
-
-//func (c *Server) AddPodSubnetRoute(node *v1.Node) error {
-//  route := NewNodePodSubnetRoute(node)
-
-//  if _, exists, _ := c.NodePodSubnetRoutes.Get(route); !exists {
-//    fmt.Printf("Announcing %s\n", route)
-//    return c.NodePodSubnetRoutes.Add(route)
-//  }
-
-//  return nil
-//}
-
-//func (c *Server) AddExternalIPRoute(service *v1.Service, proxy *v1.Pod) error {
-//  route := NewExternalIPRoute(service, proxy)
-
-//  if _, exists, _ := c.ExternalIPRoutes.Get(route); !exists {
-//    fmt.Printf("Announcing %s\n", route)
-//    return c.ExternalIPRoutes.Add(route)
-//  }
-
-//  return nil
-//}
-
-//func (c *Server) DeleteExternalIPRoute(route ExternalIPRoute) error {
-//  if _, exists, _ := c.ExternalIPRoutes.Get(route); exists {
-//    fmt.Printf("Withdrawing %s\n", route)
-//    return c.ExternalIPRoutes.Delete(route)
-//  }
-
-//  return nil
-//}
-
-//func (c *Server) DeleteNodePodSubnetRoute(route NodePodSubnetRoute) error {
-//  if _, exists, _ := c.NodePodSubnetRoutes.Get(route); exists {
-//    fmt.Printf("Withdrawing %s\n", route)
-//    return c.NodePodSubnetRoutes.Delete(route)
-//  }
-
-//  return nil
-//}

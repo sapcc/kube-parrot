@@ -18,10 +18,11 @@ var (
 )
 
 type Options struct {
-	GrpcPort     int
-	As           int
-	LocalAddress net.IP
-	Neighbors    []*net.IP
+	GrpcPort      int
+	As            int
+	LocalAddress  net.IP
+	MasterAddress net.IP
+	Neighbors     []*net.IP
 }
 
 type Parrot struct {
@@ -34,18 +35,20 @@ type Parrot struct {
 
 	podSubnets      *controller.PodSubnetsController
 	externalSevices *controller.ExternalServicesController
+	apiservers      *controller.APIServerController
 }
 
 func New(opts Options) *Parrot {
 	p := &Parrot{
 		Options: opts,
-		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort),
+		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort, opts.MasterAddress),
 		client:  NewClient(),
 	}
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
 	p.podSubnets = controller.NewPodSubnetsController(p.informers, p.bgp.NodePodSubnetRoutes)
 	p.externalSevices = controller.NewExternalServicesController(p.informers, p.bgp.ExternalIPRoutes)
+	p.apiservers = controller.NewAPIServerController(p.informers, p.bgp.APIServerRoutes)
 
 	return p
 }
@@ -73,4 +76,5 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 
 	go p.podSubnets.Run(stopCh, wg)
 	go p.externalSevices.Run(stopCh, wg)
+	go p.apiservers.Run(stopCh, wg)
 }

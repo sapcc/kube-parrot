@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"strconv"
 	"strings"
 	"sync"
 
@@ -9,7 +8,6 @@ import (
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
 	"github.com/sapcc/kube-parrot/pkg/forked/util"
-	"github.com/sapcc/kube-parrot/pkg/types"
 	"github.com/sapcc/kube-parrot/pkg/util"
 	"k8s.io/client-go/1.5/pkg/api/v1"
 	"k8s.io/client-go/1.5/tools/cache"
@@ -110,21 +108,21 @@ func (c *ExternalServicesController) serviceDelete(service interface{}) {
 
 func (c *ExternalServicesController) serviceAdd(obj interface{}) {
 	service := obj.(*v1.Service)
-	if l, ok := service.Annotations[types.AnnotationBGPAnnouncement]; ok {
-		announcementRequested, err := strconv.ParseBool(l)
-		if err != nil {
-			glog.Errorf("Failed to parse annotation %v: %v", types.AnnotationBGPAnnouncement, err)
-			return
-		}
+	//if l, ok := service.Annotations[types.AnnotationBGPAnnouncement]; ok {
+	//  announcementRequested, err := strconv.ParseBool(l)
+	//  if err != nil {
+	//    glog.Errorf("Failed to parse annotation %v: %v", types.AnnotationBGPAnnouncement, err)
+	//    return
+	//  }
 
-		if !announcementRequested {
-			glog.V(3).Infof("Skipping service %v. Annotation is set but not true. Huh?", service.GetName())
-			return
-		}
-	} else {
-		glog.V(5).Infof("Skipping service %v. No announce annotation defined...", service.GetName())
-		return
-	}
+	//  if !announcementRequested {
+	//    glog.V(3).Infof("Skipping service %v. Annotation is set but not true. Huh?", service.GetName())
+	//    return
+	//  }
+	//} else {
+	//  glog.V(5).Infof("Skipping service %v. No announce annotation defined...", service.GetName())
+	//  return
+	//}
 
 	if len(service.Spec.ExternalIPs) == 0 {
 		glog.V(3).Infof("Skipping service %v. No externalIP defined...", service.GetName())

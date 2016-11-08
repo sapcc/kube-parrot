@@ -2,71 +2,113 @@ package bgp
 
 import (
 	"fmt"
+	"net"
+	"time"
 
+	"github.com/osrg/gobgp/packet/bgp"
+	"github.com/osrg/gobgp/table"
 	"github.com/sapcc/kube-parrot/pkg/types"
 
 	"k8s.io/client-go/1.5/pkg/api/v1"
 )
 
 type RouteInterface interface {
-	SourceCIDR() string
-	NextHop() string
+	Source() (net.IP, uint8)
+	NextHop() net.IP
 	Describe() string
+	Path(bool) *table.Path
 }
-
 
 type Route struct {
 	RouteInterface
 }
 
 func (r Route) String() string {
-	return fmt.Sprintf("%18s -> %-15s (%s)", r.SourceCIDR(), r.NextHop(), r.Describe())
+	prefix, length := r.Source()
+
+	return fmt.Sprintf("%16s/%v -> %-15s (%s)", prefix.To4().String(), length, r.NextHop().To4().String(), r.Describe())
 }
 
+func (r Route) Path(isWithdraw bool) *table.Path {
+	prefix, length := r.Source()
+	nlri := bgp.NewIPAddrPrefix(length, prefix.To4().String())
+
+	pattr := []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
+		bgp.NewPathAttributeNextHop(r.NextHop().To4().String()),
+	}
+
+	return table.NewPath(nil, nlri, isWithdraw, pattr, time.Now(), false)
+}
 
 type ExternalIPRoute struct {
+	Route
 	Service *v1.Service
 	Proxy   *v1.Pod
 }
 
-func (r ExternalIPRoute) SourceCIDR() string {
-	return fmt.Sprintf("%s/32", r.Service.Spec.ExternalIPs[0])
+func (r ExternalIPRoute) Source() (net.IP, uint8) {
+	return net.ParseIP(r.Service.Spec.ExternalIPs[0]), uint8(32)
 }
 
-func (r ExternalIPRoute) NextHop() string {
-	return r.Proxy.Status.HostIP
+func (r ExternalIPRoute) NextHop() net.IP {
+	return net.ParseIP(r.Proxy.Status.HostIP)
 }
 
 func (r ExternalIPRoute) Describe() string {
-	return fmt.Sprintf("ExternalIP: %s/%s -> %s/%s", r.Service.Namespace, r.Service.Name, r.Proxy.Namespace, r.Proxy.Name)
+	return fmt.Sprintf("ExternalIP:    %s/%s -> %s/%s", r.Service.Namespace, r.Service.Name, r.Proxy.Namespace, r.Proxy.Name)
 }
 
-
 type NodePodSubnetRoute struct {
+	Route
 	Node *v1.Node
 }
 
-func (r NodePodSubnetRoute) SourceCIDR() string {
+func (r NodePodSubnetRoute) Source() (net.IP, uint8) {
 	subnet, _ := GetNodePodSubnet(r.Node)
-	return subnet
+	ip, ipnet, _ := net.ParseCIDR(subnet)
+	prefixSize, _ := ipnet.Mask.Size()
+	return ip, uint8(prefixSize)
 }
 
-func (r NodePodSubnetRoute) NextHop() string {
+func (r NodePodSubnetRoute) NextHop() net.IP {
 	nexthop, _ := GetNodeInternalIP(r.Node)
-	return nexthop
+	return net.ParseIP(nexthop)
 }
 
 func (r NodePodSubnetRoute) Describe() string {
-	return fmt.Sprintf("NodePodSubnet: %s -> %s", r.SourceCIDR(), r.Node.Name)
+	prefix, length := r.Source()
+	return fmt.Sprintf("NodePodSubnet: %s/%s -> %s", prefix.To4().String(), length, r.Node.Name)
 }
 
+type APIServerRoute struct {
+	Route
+	APIServer *v1.Pod
+	masterIP  net.IP
+}
+
+func (r APIServerRoute) Source() (net.IP, uint8) {
+	return net.ParseIP(r.APIServer.Status.HostIP), 32
+}
+
+func (r APIServerRoute) NextHop() net.IP {
+	return r.masterIP
+}
+
+func (r APIServerRoute) Describe() string {
+	return fmt.Sprintf("APIServer:     %s/%s -> %s", r.APIServer.Namespace, r.APIServer.Name, r.masterIP)
+}
 
 func NewNodePodSubnetRoute(node *v1.Node) RouteInterface {
-	return Route{NodePodSubnetRoute{node}}
+	return NodePodSubnetRoute{Route{}, node}
 }
 
 func NewExternalIPRoute(service *v1.Service, proxy *v1.Pod) RouteInterface {
-	return Route{ExternalIPRoute{service, proxy}}
+	return ExternalIPRoute{Route{}, service, proxy}
+}
+
+func NewAPIServerRoute(apiserver *v1.Pod, masterIP net.IP) RouteInterface {
+	return APIServerRoute{Route{}, apiserver, masterIP}
 }
 
 func GetNodeInternalIP(node *v1.Node) (string, error) {

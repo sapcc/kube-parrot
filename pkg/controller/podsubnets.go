@@ -8,8 +8,8 @@ import (
 
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
-	"github.com/sapcc/kube-parrot/pkg/util"
 	"github.com/sapcc/kube-parrot/pkg/types"
+	"github.com/sapcc/kube-parrot/pkg/util"
 )
 
 type PodSubnetsController struct {
@@ -52,6 +52,10 @@ func (c *PodSubnetsController) nodeAdd(obj interface{}) {
 	node := obj.(*v1.Node)
 
 	if _, ok := node.Annotations[types.AnnotationNodePodSubnet]; !ok {
+		if _, exists, _ := c.nodes.Get(node); exists {
+			c.nodes.Delete(node)
+			c.reconciler.Dirty()
+		}
 		return
 	}
 
@@ -62,7 +66,7 @@ func (c *PodSubnetsController) nodeAdd(obj interface{}) {
 }
 
 func (c *PodSubnetsController) nodeUpdate(old, cur interface{}) {
-	c.nodeAdd(cur)
+	c.nodeAdd(cur.(*v1.Node))
 }
 
 func (c *PodSubnetsController) nodeDelete(obj interface{}) {

@@ -25,6 +25,7 @@ var neighbors Neighbors
 func init() {
 	flag.IntVar(&opts.As, "as", 65000, "global AS")
 	flag.IPVar(&opts.LocalAddress, "local_address", net.ParseIP("127.0.0.1"), "local IP address")
+	flag.IPVar(&opts.MasterAddress, "master_address", net.ParseIP("127.0.0.1"), "master IP address")
 	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
 }
 
