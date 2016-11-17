@@ -1,12 +1,11 @@
 DATE    = $(shell date +%Y%m%d%H%M)
+IMAGE   ?= sapcc/kube-parrot
 VERSION = v$(DATE)
 GOOS    ?= darwin
-GOARCH  ?= amd64
 
 LDFLAGS := -X github.com/sapcc/kube-parrot/pkg/parrot.VERSION=$(VERSION)
 GOFLAGS := -ldflags "$(LDFLAGS)"
 
-BINARIES := parrot 
 CMDDIR   := cmd
 PKGDIR   := pkg
 PACKAGES := $(shell find $(CMDDIR) $(PKGDIR) -type d)
@@ -15,10 +14,16 @@ GOFILES  := $(wildcard $(GOFILES))
 
 .PHONY: all clean
 
-all: $(BINARIES:%=bin/$(GOOS)/$(GOARCH)/%)
+all: bin/$(GOOS)/parrot
 
-bin/$(GOOS)/$(GOARCH)/%: $(GOFILES) Makefile
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go build $(GOFLAGS) -v -i -o bin/$(GOOS)/$(GOARCH)/$* ./cmd/$*
+bin/%/parrot: $(GOFILES) Makefile
+	GOOS=$* GOARCH=amd64 go build $(GOFLAGS) -v -i -o bin/$*/parrot ./cmd/parrot
+
+build: bin/linux/parrot
+	docker build -t $(IMAGE):$(VERSION) .
+
+push:
+	docker push $(IMAGE):$(VERSION)
 
 clean:
 	rm -rf bin/*
