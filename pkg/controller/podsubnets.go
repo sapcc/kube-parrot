@@ -6,6 +6,7 @@ import (
 	"k8s.io/client-go/1.5/pkg/api/v1"
 	"k8s.io/client-go/1.5/tools/cache"
 
+	"github.com/golang/glog"
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
 	"github.com/sapcc/kube-parrot/pkg/types"
@@ -53,6 +54,7 @@ func (c *PodSubnetsController) nodeAdd(obj interface{}) {
 
 	if _, ok := node.Annotations[types.AnnotationNodePodSubnet]; !ok {
 		if _, exists, _ := c.nodes.Get(node); exists {
+			glog.V(3).Infof("Deleting Node (%s)", node.Name)
 			c.nodes.Delete(node)
 			c.reconciler.Dirty()
 		}
@@ -60,6 +62,7 @@ func (c *PodSubnetsController) nodeAdd(obj interface{}) {
 	}
 
 	if _, exists, _ := c.nodes.Get(node); !exists {
+		glog.V(3).Infof("Adding Node (%s)", node.Name)
 		c.nodes.Add(node)
 		c.reconciler.Dirty()
 	}
