@@ -78,7 +78,27 @@ func (r NodePodSubnetRoute) NextHop() net.IP {
 
 func (r NodePodSubnetRoute) Describe() string {
 	prefix, length := r.Source()
-	return fmt.Sprintf("NodePodSubnet: %s/%s -> %s", prefix.To4().String(), length, r.Node.Name)
+	return fmt.Sprintf("NodePodSubnet: %s/%v -> %s", prefix.To4().String(), length, r.Node.Name)
+}
+
+type NodeServiceSubnetRoute struct {
+	Route
+	Proxy         *v1.Pod
+	ServiceSubnet net.IPNet
+}
+
+func (r NodeServiceSubnetRoute) Source() (net.IP, uint8) {
+	prefixSize, _ := r.ServiceSubnet.Mask.Size()
+	return r.ServiceSubnet.IP, uint8(prefixSize)
+}
+
+func (r NodeServiceSubnetRoute) NextHop() net.IP {
+	return net.ParseIP(r.Proxy.Status.HostIP)
+}
+
+func (r NodeServiceSubnetRoute) Describe() string {
+	prefix, length := r.Source()
+	return fmt.Sprintf("NodeServiceSubnet: %s/%v -> %s", prefix.To4().String(), length, r.Proxy.Name)
 }
 
 type APIServerRoute struct {
@@ -88,11 +108,11 @@ type APIServerRoute struct {
 }
 
 func (r APIServerRoute) Source() (net.IP, uint8) {
-	return net.ParseIP(r.APIServer.Status.HostIP), 32
+	return r.masterIP, 32
 }
 
 func (r APIServerRoute) NextHop() net.IP {
-	return r.masterIP
+	return net.ParseIP(r.APIServer.Status.HostIP)
 }
 
 func (r APIServerRoute) Describe() string {
@@ -101,6 +121,10 @@ func (r APIServerRoute) Describe() string {
 
 func NewNodePodSubnetRoute(node *v1.Node) RouteInterface {
 	return NodePodSubnetRoute{Route{}, node}
+}
+
+func NewNodeServiceSubnetRoute(proxy *v1.Pod, subnet net.IPNet) RouteInterface {
+	return NodeServiceSubnetRoute{Route{}, proxy, subnet}
 }
 
 func NewExternalIPRoute(service *v1.Service, proxy *v1.Pod) RouteInterface {

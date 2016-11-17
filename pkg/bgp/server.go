@@ -22,6 +22,7 @@ type Server struct {
 
 	ExternalIPRoutes    *ExternalIPRoutesStore
 	NodePodSubnetRoutes *NodePodSubnetRoutesStore
+	NodeServiceSubnetRoutes *NodeServiceSubnetRoutesStore
 	APIServerRoutes     *APIServerRoutesStore
 }
 
@@ -34,6 +35,7 @@ func NewServer(localAddress net.IP, as int, port int, masterIP net.IP) *Server {
 
 	server.ExternalIPRoutes = newExternalIPRoutesStore(server)
 	server.NodePodSubnetRoutes = newNodePodSubnetRoutesStore(server)
+	server.NodeServiceSubnetRoutes = newNodeServiceSubnetRoutesStore(server)
 	server.APIServerRoutes = newAPIServerRoutesStore(server, masterIP)
 
 	server.bgp = gobgp.NewBgpServer()
@@ -87,11 +89,5 @@ func (s *Server) AddNeighbor(neighbor string) {
 
 	if err := s.bgp.AddNeighbor(n); err != nil {
 		glog.Errorf("Oops. Something went wrong adding neighbor: %s", err)
-	}
-}
-
-func (s *Server) debug() {
-	for _, route := range s.bgp.GetVrf() {
-		glog.V(5).Infof("%s", route)
 	}
 }

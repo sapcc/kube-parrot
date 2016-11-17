@@ -23,9 +23,12 @@ var opts parrot.Options
 var neighbors Neighbors
 
 func init() {
+	flag.StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to kubeconfig file with authorization and master location information.")
 	flag.IntVar(&opts.As, "as", 65000, "global AS")
 	flag.IPVar(&opts.LocalAddress, "local_address", net.ParseIP("127.0.0.1"), "local IP address")
 	flag.IPVar(&opts.MasterAddress, "master_address", net.ParseIP("127.0.0.1"), "master IP address")
+	flag.IPNetVar(&opts.ServiceSubnet, "service_subnet", net.IPNet{}, "service subnet")
+
 	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
 }
 
