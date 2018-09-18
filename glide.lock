@@ -1,5 +1,5 @@
 hash: a57250ccf3da2fa2a18afc777e4819998a92d9c0bd8a8e3e9148711fdd5a5503
-updated: 2018-09-18T14:48:34.663964+02:00
+updated: 2018-09-18T14:58:32.729458+02:00
 imports:
 - name: github.com/armon/go-radix
   version: 4239b77079c7b5d1243b7b4736304ce8ddb6f0f2
@@ -135,7 +135,7 @@ imports:
   - nfs
   - xfs
 - name: github.com/satori/go.uuid
-  version: b061729afc07e77a8aa4fad0a2fd840958f1942a
+  version: 36e9d2ebbde5e3f13ab2e25625fd453271d6522e
 - name: github.com/sirupsen/logrus
   version: 3ec0642a7fb6488f65b06f9040adc67e3990296a
 - name: github.com/spf13/afero
@@ -193,8 +193,12 @@ imports:
   version: f51c12702a4d776e4c1fa9b0fabab841babae631
   subpackages:
   - rate
+- name: google.golang.org/genproto
+  version: 09f6ed296fc66555a25fe4ce95173148778dfa85
+  subpackages:
+  - googleapis/rpc/status
 - name: google.golang.org/grpc
-  version: 72d072e4c18c02bfe6c98fc661a4df74da546145
+  version: b8669c35455183da6d5c474ea6e72fbf55183274
   subpackages:
   - codes
   - credentials
