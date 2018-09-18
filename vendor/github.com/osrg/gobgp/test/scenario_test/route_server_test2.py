@@ -13,16 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-from fabric.api import local
-from lib import base
-from lib.gobgp import *
-from lib.exabgp import *
+from __future__ import absolute_import
+
 import sys
-import os
 import time
+import unittest
+
+from fabric.api import local
 import nose
-from noseplugin import OptionParser, parser_option
+
+from lib.noseplugin import OptionParser, parser_option
+
+from lib import base
+from lib.base import BGP_FSM_ESTABLISHED
+from lib.gobgp import GoBGPContainer
+from lib.exabgp import ExaBGPContainer
 
 
 class GoBGPTestBase(unittest.TestCase):
@@ -38,31 +43,31 @@ class GoBGPTestBase(unittest.TestCase):
         g1 = GoBGPContainer(name='g1', asn=65000, router_id='192.168.0.1',
                             ctn_image_name=gobgp_ctn_image_name,
                             log_level=parser_option.gobgp_log_level)
-
-        g2 = GoBGPContainer(name='g2', asn=65001, router_id='192.168.0.2')
+        g2 = GoBGPContainer(name='g2', asn=65001, router_id='192.168.0.2',
+                            ctn_image_name=gobgp_ctn_image_name)
         e1 = ExaBGPContainer(name='e1', asn=65002, router_id='192.168.0.3')
-        ctns = [g1, g2, e1]
 
-        # advertise a route from route-server-clients
-        cls.clients = {}
-        for idx, cli in enumerate((g2, e1)):
-            route = '10.0.{0}.0/24'.format(idx)
-            cli.add_route(route)
-            cls.clients[cli.name] = cli
+        ctns = [g1, g2, e1]
+        cls.clients = {cli.name: cli for cli in (g2, e1)}
 
         initial_wait_time = max(ctn.run() for ctn in ctns)
-
         time.sleep(initial_wait_time)
 
-        for cli in cls.clients.itervalues():
-            g1.add_peer(cli, is_rs_client=True, passwd='passwd', passive=True, prefix_limit=10)
-            cli.add_peer(g1, passwd='passwd')
+        for cli in cls.clients.values():
+            # Omit "passwd" to avoid a issue on ExaBGP version 4.0.5:
+            # https://github.com/Exa-Networks/exabgp/issues/766
+            g1.add_peer(cli, is_rs_client=True, passive=True, prefix_limit=10)
+            cli.add_peer(g1)
+
+        # advertise a route from route-server-clients
+        g2.add_route('10.0.0.0/24')
+        e1.add_route('10.0.1.0/24')
 
         cls.gobgp = g1
 
     # test each neighbor state is turned establish
     def test_01_neighbor_established(self):
-        for cli in self.clients.itervalues():
+        for cli in self.clients.values():
             self.gobgp.wait_for(expected_state=BGP_FSM_ESTABLISHED, peer=cli)
 
     def test_02_add_neighbor(self):
@@ -84,16 +89,13 @@ class GoBGPTestBase(unittest.TestCase):
     def test_04_withdraw_path(self):
         self.clients['g2'].local('gobgp global rib del 10.0.0.0/24')
         time.sleep(1)
-        info = self.gobgp.get_neighbor(self.clients['g2'])['info']
+        info = self.gobgp.get_neighbor(self.clients['g2'])['state']['adj-table']
         self.assertTrue(info['advertised'] == 1)
-        self.assertTrue('accepted' not in info) # means info['accepted'] == 0
-        self.assertTrue('received' not in info) # means info['received'] == 0
+        self.assertTrue('accepted' not in info)  # means info['accepted'] == 0
+        self.assertTrue('received' not in info)  # means info['received'] == 0
 
 
 if __name__ == '__main__':
-    if os.geteuid() is not 0:
-        print "you are not root."
-        sys.exit(1)
     output = local("which docker 2>&1 > /dev/null ; echo $?", capture=True)
     if int(output) is not 0:
         print "docker not found"

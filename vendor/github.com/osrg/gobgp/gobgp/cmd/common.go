@@ -19,15 +19,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/osrg/gobgp/api"
-	"github.com/osrg/gobgp/packet/bgp"
-	"google.golang.org/grpc"
 	"net"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+
+	api "github.com/osrg/gobgp/api"
+	cli "github.com/osrg/gobgp/client"
+	"github.com/osrg/gobgp/config"
+	"github.com/osrg/gobgp/packet/bgp"
 )
 
 const (
@@ -72,6 +77,15 @@ const (
 	CMD_UPDATE         = "update"
 	CMD_ROTATE         = "rotate"
 	CMD_BMP            = "bmp"
+	CMD_LARGECOMMUNITY = "large-community"
+	CMD_SUMMARY        = "summary"
+	CMD_VALIDATION     = "validation"
+)
+
+const (
+	PARAM_FLAG = iota
+	PARAM_SINGLE
+	PARAM_LIST
 )
 
 var subOpts struct {
@@ -79,30 +93,21 @@ var subOpts struct {
 }
 
 var neighborsOpts struct {
+	Reason    string `short:"r" long:"reason" description:"specifying communication field on Cease NOTIFICATION message with Administrative Shutdown subcode"`
 	Transport string `short:"t" long:"transport" description:"specifying a transport protocol"`
 }
 
-var conditionOpts struct {
-	Prefix       string `long:"prefix" description:"specifying a prefix set name of policy"`
-	Neighbor     string `long:"neighbor" description:"specifying a neighbor set name of policy"`
-	AsPath       string `long:"aspath" description:"specifying an as set name of policy"`
-	Community    string `long:"community" description:"specifying a community set name of policy"`
-	ExtCommunity string `long:"extcommunity" description:"specifying a extended community set name of policy"`
-	AsPathLength string `long:"aspath-len" description:"specifying an as path length of policy (<operator>,<numeric>)"`
-}
-
-var actionOpts struct {
-	RouteAction         string `long:"route-action" description:"specifying a route action of policy (accept | reject)"`
-	CommunityAction     string `long:"community" description:"specifying a community action of policy"`
-	MedAction           string `long:"med" description:"specifying a med action of policy"`
-	AsPathPrependAction string `long:"as-prepend" description:"specifying a as-prepend action of policy"`
-	NexthopAction       string `long:"next-hop" description:"specifying a next-hop action of policy"`
-}
-
 var mrtOpts struct {
-	OutputDir  string
-	FileFormat string
-	Best       bool `long:"only-best" description:"only keep best path routes"`
+	OutputDir   string
+	FileFormat  string
+	Filename    string `long:"filename" description:"MRT file name"`
+	RecordCount int64  `long:"count" description:"Number of records to inject"`
+	RecordSkip  int64  `long:"skip" description:"Number of records to skip before injecting"`
+	QueueSize   int    `long:"batch-size" description:"Maximum number of updates to keep queued"`
+	Best        bool   `long:"only-best" description:"only keep best path routes"`
+	SkipV4      bool   `long:"no-ipv4" description:"Skip importing IPv4 routes"`
+	SkipV6      bool   `long:"no-ipv4" description:"Skip importing IPv6 routes"`
+	NextHop     net.IP `long:"nexthop" description:"Rewrite nexthop"`
 }
 
 func formatTimedelta(d int64) string {
@@ -120,9 +125,8 @@ func formatTimedelta(d int64) string {
 
 	if days == 0 {
 		return fmt.Sprintf("%02d:%02d:%02d", hours, mins, secs)
-	} else {
-		return fmt.Sprintf("%dd ", days) + fmt.Sprintf("%02d:%02d:%02d", hours, mins, secs)
 	}
+	return fmt.Sprintf("%dd ", days) + fmt.Sprintf("%02d:%02d:%02d", hours, mins, secs)
 }
 
 func cidr2prefix(cidr string) string {
@@ -138,11 +142,11 @@ func cidr2prefix(cidr string) string {
 	return buffer.String()[:ones]
 }
 
-func extractReserved(args, keys []string) map[string][]string {
+func extractReserved(args []string, keys map[string]int) (map[string][]string, error) {
 	m := make(map[string][]string, len(keys))
 	var k string
 	isReserved := func(s string) bool {
-		for _, r := range keys {
+		for r := range keys {
 			if s == r {
 				return true
 			}
@@ -157,86 +161,45 @@ func extractReserved(args, keys []string) map[string][]string {
 			m[k] = append(m[k], arg)
 		}
 	}
-	return m
-}
-
-type PeerConf struct {
-	RemoteIp          string                             `json:"remote_ip,omitempty"`
-	Id                net.IP                             `json:"id,omitempty"`
-	RemoteAs          uint32                             `json:"remote_as,omitempty"`
-	LocalAs           uint32                             `json:"local-as,omitempty"`
-	RemoteCap         []bgp.ParameterCapabilityInterface `json:"remote_cap,omitempty"`
-	LocalCap          []bgp.ParameterCapabilityInterface `json:"local_cap,omitempty"`
-	Holdtime          uint32                             `json:"holdtime,omitempty"`
-	KeepaliveInterval uint32                             `json:"keepalive_interval,omitempty"`
-	PrefixLimits      []*gobgpapi.PrefixLimit            `json:"prefix_limits,omitempty"`
-	LocalIp           string                             `json:"local_ip,omitempty"`
-	Interface         string                             `json:"interface,omitempty"`
-	Description       string                             `json:"description,omitempty"`
-}
-
-type Peer struct {
-	Conf           PeerConf                 `json:"conf,omitempty"`
-	Info           *gobgpapi.PeerState      `json:"info,omitempty"`
-	Timers         *gobgpapi.Timers         `json:"timers,omitempty"`
-	RouteReflector *gobgpapi.RouteReflector `json:"route_reflector,omitempty"`
-	RouteServer    *gobgpapi.RouteServer    `json:"route_server,omitempty"`
-}
-
-func ApiStruct2Peer(p *gobgpapi.Peer) *Peer {
-	localCaps := capabilities{}
-	remoteCaps := capabilities{}
-	for _, buf := range p.Conf.LocalCap {
-		c, _ := bgp.DecodeCapability(buf)
-		localCaps = append(localCaps, c)
+	for k, v := range m {
+		if k == "" {
+			continue
+		}
+		switch keys[k] {
+		case PARAM_FLAG:
+			if len(v) != 0 {
+				return nil, fmt.Errorf("%s should not have arguments", k)
+			}
+		case PARAM_SINGLE:
+			if len(v) != 1 {
+				return nil, fmt.Errorf("%s should have one argument", k)
+			}
+		case PARAM_LIST:
+			if len(v) == 0 {
+				return nil, fmt.Errorf("%s should have one or more arguments", k)
+			}
+		}
 	}
-	for _, buf := range p.Conf.RemoteCap {
-		c, _ := bgp.DecodeCapability(buf)
-		remoteCaps = append(remoteCaps, c)
-	}
-	remoteIp, _ := net.ResolveIPAddr("ip", p.Conf.NeighborAddress)
-	localIp, _ := net.ResolveIPAddr("ip", p.Conf.LocalAddress)
-	conf := PeerConf{
-		RemoteIp:     remoteIp.String(),
-		Id:           net.ParseIP(p.Conf.Id),
-		RemoteAs:     p.Conf.PeerAs,
-		LocalAs:      p.Conf.LocalAs,
-		RemoteCap:    remoteCaps,
-		LocalCap:     localCaps,
-		PrefixLimits: p.Conf.PrefixLimits,
-		LocalIp:      localIp.String(),
-		Interface:    p.Conf.NeighborInterface,
-		Description:  p.Conf.Description,
-	}
-	return &Peer{
-		Conf:           conf,
-		Info:           p.Info,
-		Timers:         p.Timers,
-		RouteReflector: p.RouteReflector,
-		RouteServer:    p.RouteServer,
-	}
+	return m, nil
 }
 
-type peers []*Peer
+type neighbors []*config.Neighbor
 
-func (p peers) Len() int {
-	return len(p)
+func (n neighbors) Len() int {
+	return len(n)
 }
 
-func (p peers) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
+func (n neighbors) Swap(i, j int) {
+	n[i], n[j] = n[j], n[i]
 }
 
-func (p peers) Less(i, j int) bool {
-	p1 := p[i].Conf.RemoteIp
-	p2 := p[j].Conf.RemoteIp
+func (n neighbors) Less(i, j int) bool {
+	p1 := n[i].State.NeighborAddress
+	p2 := n[j].State.NeighborAddress
 	p1Isv4 := !strings.Contains(p1, ":")
 	p2Isv4 := !strings.Contains(p2, ":")
 	if p1Isv4 != p2Isv4 {
-		if p1Isv4 {
-			return true
-		}
-		return false
+		return p1Isv4
 	}
 	addrlen := 128
 	if p1Isv4 {
@@ -261,51 +224,7 @@ func (c capabilities) Less(i, j int) bool {
 	return c[i].Code() < c[j].Code()
 }
 
-type sets []*gobgpapi.DefinedSet
-
-func (n sets) Len() int {
-	return len(n)
-}
-
-func (n sets) Swap(i, j int) {
-	n[i], n[j] = n[j], n[i]
-}
-
-func (n sets) Less(i, j int) bool {
-	return n[i].Name < n[j].Name
-}
-
-type policies []*gobgpapi.Policy
-
-func (p policies) Len() int {
-	return len(p)
-}
-
-func (p policies) Swap(i, j int) {
-	p[i], p[j] = p[j], p[i]
-}
-
-func (p policies) Less(i, j int) bool {
-	return p[i].Name < p[j].Name
-}
-
-type roas []*gobgpapi.Roa
-
-func (r roas) Len() int {
-	return len(r)
-}
-
-func (r roas) Swap(i, j int) {
-	r[i], r[j] = r[j], r[i]
-}
-
-func (r roas) Less(i, j int) bool {
-	strings := sort.StringSlice{cidr2prefix(fmt.Sprintf("%s/%d", r[i].Prefix, r[i].Prefixlen)),
-		cidr2prefix(fmt.Sprintf("%s/%d", r[j].Prefix, r[j].Prefixlen))}
-	return strings.Less(0, 1)
-}
-
-type vrfs []*gobgpapi.Vrf
+type vrfs []*api.Vrf
 
 func (v vrfs) Len() int {
 	return len(v)
@@ -319,14 +238,31 @@ func (v vrfs) Less(i, j int) bool {
 	return v[i].Name < v[j].Name
 }
 
-func connGrpc() *grpc.ClientConn {
-	timeout := grpc.WithTimeout(time.Second)
-	target := net.JoinHostPort(globalOpts.Host, strconv.Itoa(globalOpts.Port))
-	conn, err := grpc.Dial(target, timeout, grpc.WithBlock(), grpc.WithInsecure())
-	if err != nil {
-		exitWithError(err)
+func newClient() *cli.Client {
+	var grpcOpts []grpc.DialOption
+	if globalOpts.TLS {
+		var creds credentials.TransportCredentials
+		if globalOpts.CaFile == "" {
+			creds = credentials.NewClientTLSFromCert(nil, "")
+		} else {
+			var err error
+			creds, err = credentials.NewClientTLSFromFile(globalOpts.CaFile, "")
+			if err != nil {
+				exitWithError(err)
+			}
+		}
+		grpcOpts = []grpc.DialOption{
+			grpc.WithTimeout(time.Second),
+			grpc.WithBlock(),
+			grpc.WithTransportCredentials(creds),
+		}
 	}
-	return conn
+	target := net.JoinHostPort(globalOpts.Host, strconv.Itoa(globalOpts.Port))
+	client, err := cli.New(target, grpcOpts...)
+	if err != nil {
+		exitWithError(fmt.Errorf("failed to connect to %s over gRPC: %s", target, err))
+	}
+	return client
 }
 
 func addr2AddressFamily(a net.IP) bgp.RouteFamily {

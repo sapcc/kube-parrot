@@ -13,19 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-from fabric.api import local
-from lib import base
-from lib.gobgp import *
-from lib.quagga import *
-from lib.exabgp import *
+from __future__ import absolute_import
+
 import sys
-import os
 import time
-import nose
+import unittest
 import inspect
-from nose.tools import *
-from noseplugin import OptionParser, parser_option
+
+from fabric.api import local
+import nose
+from nose.tools import (
+    assert_true,
+    assert_false,
+)
+
+from lib.noseplugin import OptionParser, parser_option
+
+from lib import base
+from lib.base import (
+    Bridge,
+    BGP_FSM_ESTABLISHED,
+    BGP_ATTR_TYPE_COMMUNITIES,
+    BGP_ATTR_TYPE_EXTENDED_COMMUNITIES,
+)
+from lib.gobgp import GoBGPContainer
+from lib.quagga import QuaggaBGPContainer
+from lib.exabgp import ExaBGPContainer
 
 
 counter = 1
@@ -247,7 +260,7 @@ class ImportPolicyUpdate(object):
     @staticmethod
     def check(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 3)
@@ -261,8 +274,8 @@ class ImportPolicyUpdate(object):
     def setup2(env):
         g1 = env.g1
         e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
+        # q1 = env.q1
+        # q2 = env.q2
 
         g1.local('gobgp policy prefix del ps0 192.168.200.0/24')
         g1.softreset(e1)
@@ -270,7 +283,7 @@ class ImportPolicyUpdate(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 3)
@@ -347,7 +360,7 @@ class ExportPolicyUpdate(object):
     @staticmethod
     def check(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 3)
@@ -374,7 +387,7 @@ class ExportPolicyUpdate(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 3)
@@ -391,6 +404,7 @@ class ExportPolicyUpdate(object):
         lookup_scenario("ExportPolicyUpdate").check(env)
         lookup_scenario("ExportPolicyUpdate").setup2(env)
         lookup_scenario("ExportPolicyUpdate").check2(env)
+
 
 @register_scenario
 class ExportPolicyUpdateRouteRefresh(object):
@@ -456,6 +470,7 @@ class ExportPolicyUpdateRouteRefresh(object):
         lookup_scenario("ExportPolicyUpdateRouteRefresh").check(env)
         lookup_scenario("ExportPolicyUpdateRouteRefresh").setup2(env)
         lookup_scenario("ExportPolicyUpdateRouteRefresh").check2(env)
+
 
 @register_scenario
 class ImportPolicyIPV6(object):
@@ -661,8 +676,8 @@ class ImportPolicyIPV6Update(object):
     def setup2(env):
         g1 = env.g1
         e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
+        # q1 = env.q1
+        # q2 = env.q2
 
         g1.local('gobgp policy prefix del ps0 2001:0:10:20::/64')
         g1.softreset(e1, rf='ipv6')
@@ -807,9 +822,9 @@ class ImportPolicyAsPathLengthCondition(object):
         g1.local('gobgp neighbor {0} policy import add policy0'.format(g1.peers[q2]['neigh_addr'].split('/')[0]))
 
         # this will be blocked
-        e1.add_route('192.168.100.0/24', aspath=range(e1.asn, e1.asn-10, -1))
+        e1.add_route('192.168.100.0/24', aspath=range(e1.asn, e1.asn - 10, -1))
         # this will pass
-        e1.add_route('192.168.200.0/24', aspath=range(e1.asn, e1.asn-8, -1))
+        e1.add_route('192.168.200.0/24', aspath=range(e1.asn, e1.asn - 8, -1))
 
         for c in [e1, q1, q2]:
             g1.wait_for(BGP_FSM_ESTABLISHED, c)
@@ -817,7 +832,7 @@ class ImportPolicyAsPathLengthCondition(object):
     @staticmethod
     def check(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 2)
@@ -863,9 +878,9 @@ class ImportPolicyAsPathCondition(object):
         g1.local('gobgp neighbor {0} policy import add policy0'.format(g1.peers[q2]['neigh_addr'].split('/')[0]))
 
         # this will be blocked
-        e1.add_route('192.168.100.0/24', aspath=range(e1.asn, e1.asn-10, -1))
+        e1.add_route('192.168.100.0/24', aspath=range(e1.asn, e1.asn - 10, -1))
         # this will pass
-        e1.add_route('192.168.200.0/24', aspath=range(e1.asn-1, e1.asn-10, -1))
+        e1.add_route('192.168.200.0/24', aspath=range(e1.asn - 1, e1.asn - 10, -1))
 
         for c in [e1, q1, q2]:
             g1.wait_for(BGP_FSM_ESTABLISHED, c)
@@ -1066,7 +1081,7 @@ class ImportPolicyAsPathMismatchCondition(object):
     @staticmethod
     def check(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 2)
@@ -1118,8 +1133,6 @@ class ImportPolicyCommunityCondition(object):
 
         for c in [e1, q1, q2]:
             g1.wait_for(BGP_FSM_ESTABLISHED, c)
-
-
 
     @staticmethod
     def check(env):
@@ -1224,7 +1237,7 @@ class ImportPolicyCommunityAction(object):
     @staticmethod
     def check(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 1)
@@ -1269,7 +1282,6 @@ class ImportPolicyCommunityReplace(object):
     def boot(env):
         lookup_scenario("ImportPolicy").boot(env)
 
-
     @staticmethod
     def setup(env):
         g1 = env.g1
@@ -1290,7 +1302,6 @@ class ImportPolicyCommunityReplace(object):
         for c in [e1, q1, q2]:
             g1.wait_for(BGP_FSM_ESTABLISHED, c)
 
-
     @staticmethod
     def check(env):
         lookup_scenario('ImportPolicyCommunityAction').check(env)
@@ -1298,7 +1309,7 @@ class ImportPolicyCommunityReplace(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         path = g1.get_adj_rib_out(q1)[0]
@@ -1356,7 +1367,7 @@ class ImportPolicyCommunityRemove(object):
     @staticmethod
     def check(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         wait_for(lambda: len(g1.get_local_rib(q1)) == 3)
@@ -1369,7 +1380,7 @@ class ImportPolicyCommunityRemove(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         adj_out = g1.get_adj_rib_out(q1)
@@ -2109,205 +2120,6 @@ class ExportPolicyMedSub(object):
 
 
 @register_scenario
-class InPolicyReject(object):
-    """
-    No.31 in-policy reject test
-                                      ----------------
-    e1 ->r1(community=65100:10) ->  x | -> q1-rib -> | -> r2 --> q1
-         r2(192.168.10.0/24)    ->  o |              |
-                                      | -> q2-rib -> | -> r2 --> q2
-                                      ----------------
-    """
-    @staticmethod
-    def boot(env):
-        lookup_scenario('ImportPolicy').boot(env)
-
-    @staticmethod
-    def setup(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-
-        g1.local('gobgp policy community add cs0 65100:10')
-        g1.local('gobgp policy statement st0 add condition community cs0')
-        g1.local('gobgp policy statement st0 add action reject')
-        g1.local('gobgp policy add policy0 st0')
-        g1.local('gobgp neighbor {0} policy in add policy0'.format(g1.peers[e1]['neigh_addr'].split('/')[0]))
-
-        e1.add_route('192.168.100.0/24', community=['65100:10'])
-        e1.add_route('192.168.10.0/24')
-
-        for c in [e1, q1, q2]:
-            g1.wait_for(BGP_FSM_ESTABLISHED, c)
-
-    @staticmethod
-    def check(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-        wait_for(lambda: len(g1.get_adj_rib_in(e1)) == 2)
-        wait_for(lambda: len(g1.get_local_rib(q1)) == 1)
-        wait_for(lambda: len(g1.get_adj_rib_out(q1)) == 1)
-        wait_for(lambda: len(q1.get_global_rib()) == 1)
-        wait_for(lambda: len(g1.get_local_rib(q2)) == 1)
-        wait_for(lambda: len(g1.get_adj_rib_out(q2)) == 1)
-        wait_for(lambda: len(q2.get_global_rib()) == 1)
-
-    @staticmethod
-    def executor(env):
-        lookup_scenario("InPolicyReject").boot(env)
-        lookup_scenario("InPolicyReject").setup(env)
-        lookup_scenario("InPolicyReject").check(env)
-
-
-@register_scenario
-class InPolicyAccept(object):
-    """
-    No.32 in-policy accept test
-                                      ----------------
-    e1 ->r1(community=65100:10) ->  x | -> q1-rib -> | -> r2 --> q1
-         r2(192.168.10.0/24)    ->  o |              |
-                                      | -> q2-rib -> | -> r2 --> q2
-                                      ----------------
-    """
-    @staticmethod
-    def boot(env):
-        lookup_scenario('ImportPolicy').boot(env)
-
-    @staticmethod
-    def setup(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-
-        g1.local('gobgp policy community add cs0 65100:10')
-        g1.local('gobgp policy statement st0 add condition community cs0')
-        g1.local('gobgp policy statement st0 add action accept')
-        g1.local('gobgp policy add policy0 st0')
-        g1.local('gobgp neighbor {0} policy in add policy0 default reject'.format(g1.peers[e1]['neigh_addr'].split('/')[0]))
-
-        e1.add_route('192.168.100.0/24', community=['65100:10'])
-        e1.add_route('192.168.10.0/24')
-
-        for c in [e1, q1, q2]:
-            g1.wait_for(BGP_FSM_ESTABLISHED, c)
-
-    @staticmethod
-    def check(env):
-        lookup_scenario('InPolicyReject').check(env)
-
-    @staticmethod
-    def executor(env):
-        lookup_scenario("InPolicyAccept").boot(env)
-        lookup_scenario("InPolicyAccept").setup(env)
-        lookup_scenario("InPolicyAccept").check(env)
-
-
-@register_scenario
-class InPolicyUpdate(object):
-    """
-    No.35 in-policy update test
-    r1:192.168.2.0
-    r2:192.168.20.0
-    r3:192.168.200.0
-                      -------------------------------------
-                      | q1                                |
-    e1 ->(r1,r2,r3)-> | ->(r1)-> rib ->(r1)-> adj-rib-out | ->(r1)-> q1
-                      |                                   |
-                      | q2                                |
-                      | ->(r1)-> rib ->(r1)-> adj-rib-out | ->(r1)-> q2
-                      -------------------------------------
-                 |
-      update distribute policy
-                 |
-                 V
-                      -------------------------------------------
-                      | q1                                      |
-    e1 ->(r1,r2,r3)-> | ->(r1,r2)-> rib ->(r1,r2)-> adj-rib-out | ->(r1,r2)-> q1
-                      |                                         |
-                      | q2                                      |
-                      | ->(r1,r3)-> rib ->(r1,r3)-> adj-rib-out | ->(r1,r3)-> q2
-                      -------------------------------------------
-    """
-    @staticmethod
-    def boot(env):
-        lookup_scenario('ImportPolicy').boot(env)
-
-    @staticmethod
-    def setup(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-
-        g1.local('gobgp policy prefix add ps0 192.168.20.0/24')
-        g1.local('gobgp policy prefix add ps0 192.168.200.0/24')
-        g1.local('gobgp policy neighbor add ns0 {0}'.format(g1.peers[e1]['neigh_addr'].split('/')[0]))
-        g1.local('gobgp policy statement st0 add condition prefix ps0')
-        g1.local('gobgp policy statement st0 add condition neighbor ns0')
-        g1.local('gobgp policy statement st0 add action reject')
-        g1.local('gobgp policy add policy0 st0')
-        g1.local('gobgp neighbor {0} policy in add policy0'.format(g1.peers[e1]['neigh_addr'].split('/')[0]))
-
-        e1.add_route('192.168.2.0/24')
-        e1.add_route('192.168.20.0/24')
-        e1.add_route('192.168.200.0/24')
-
-        for c in [e1, q1, q2]:
-            g1.wait_for(BGP_FSM_ESTABLISHED, c)
-
-    @staticmethod
-    def check(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-        wait_for(lambda: len(g1.get_adj_rib_in(e1)) == 3)
-        wait_for(lambda: len(g1.get_local_rib(q1)) == 1)
-        wait_for(lambda: len(g1.get_adj_rib_out(q1)) == 1)
-        wait_for(lambda: len(q1.get_global_rib()) == 1)
-        wait_for(lambda: len(g1.get_local_rib(q2)) == 1)
-        wait_for(lambda: len(g1.get_adj_rib_out(q2)) == 1)
-        wait_for(lambda: len(q2.get_global_rib()) == 1)
-
-    @staticmethod
-    def setup2(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-        g1.clear_policy()
-
-        g1.local('gobgp policy prefix del ps0 192.168.200.0/24')
-        g1.softreset(e1)
-
-    @staticmethod
-    def check2(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-        wait_for(lambda: len(g1.get_adj_rib_in(e1)) == 3)
-        wait_for(lambda: len(g1.get_local_rib(q1)) == 2)
-        wait_for(lambda: len(g1.get_adj_rib_out(q1)) == 2)
-        wait_for(lambda: len(q1.get_global_rib()) == 2)
-        wait_for(lambda: len(g1.get_local_rib(q2)) == 2)
-        wait_for(lambda: len(g1.get_adj_rib_out(q2)) == 2)
-        wait_for(lambda: len(q2.get_global_rib()) == 2)
-
-    @staticmethod
-    def executor(env):
-        lookup_scenario("InPolicyUpdate").boot(env)
-        lookup_scenario("InPolicyUpdate").setup(env)
-        lookup_scenario("InPolicyUpdate").check(env)
-        lookup_scenario("InPolicyUpdate").setup2(env)
-        lookup_scenario("InPolicyUpdate").check2(env)
-
-
-@register_scenario
 class ExportPolicyAsPathPrepend(object):
     """
     No.37 aspath prepend action export
@@ -2373,7 +2185,7 @@ class ExportPolicyAsPathPrepend(object):
         assert_true(path['aspath'] == [e1.asn])
 
         path = g1.get_adj_rib_out(q2, prefix='192.168.20.0/24')[0]
-        assert_true(path['aspath'] == [65005]*5 + [e1.asn])
+        assert_true(path['aspath'] == ([65005] * 5) + [e1.asn])
 
         path = g1.get_adj_rib_out(q2, prefix='192.168.200.0/24')[0]
         assert_true(path['aspath'] == [e1.asn])
@@ -2439,10 +2251,10 @@ class ImportPolicyAsPathPrependLastAS(object):
         assert_true(path['aspath'] == [e1.asn])
 
         path = g1.get_local_rib(q2, prefix='192.168.20.0/24')[0]['paths'][0]
-        assert_true(path['aspath'] == [e1.asn]*5 + [e1.asn])
+        assert_true(path['aspath'] == ([e1.asn] * 5) + [e1.asn])
 
         path = g1.get_adj_rib_out(q2, prefix='192.168.20.0/24')[0]
-        assert_true(path['aspath'] == [e1.asn]*5 + [e1.asn])
+        assert_true(path['aspath'] == ([e1.asn] * 5) + [e1.asn])
 
         path = g1.get_adj_rib_out(q2, prefix='192.168.200.0/24')[0]
         assert_true(path['aspath'] == [e1.asn])
@@ -2511,7 +2323,7 @@ class ExportPolicyAsPathPrependLastAS(object):
         assert_true(path['aspath'] == [e1.asn])
 
         path = g1.get_adj_rib_out(q2, prefix='192.168.20.0/24')[0]
-        assert_true(path['aspath'] == [e1.asn]*5 + [e1.asn])
+        assert_true(path['aspath'] == ([e1.asn] * 5) + [e1.asn])
 
         path = g1.get_adj_rib_out(q2, prefix='192.168.200.0/24')[0]
         assert_true(path['aspath'] == [e1.asn])
@@ -2612,52 +2424,6 @@ class ImportPolicyExCommunityTargetCondition(object):
         lookup_scenario("ImportPolicyExCommunityTargetCondition").check(env)
 
 
-@register_scenario
-class InPolicyPrefixCondition(object):
-    """
-    No.42 prefix only condition accept in
-                                      -----------------
-    e1 ->r1(192.168.100.0/24)   ->  o | -> q1-rib ->  | -> r2 --> q1
-         r2(192.168.10.0/24)    ->  x |               |
-                                      | -> q2-rib ->  | -> r2 --> q2
-                                      -----------------
-    """
-    @staticmethod
-    def boot(env):
-        lookup_scenario('ImportPolicy').boot(env)
-
-    @staticmethod
-    def setup(env):
-        g1 = env.g1
-        e1 = env.e1
-        q1 = env.q1
-        q2 = env.q2
-
-        g1.local('gobgp policy prefix add ps0 192.168.10.0/24')
-        g1.local('gobgp policy statement st0 add condition prefix ps0')
-        g1.local('gobgp policy statement st0 add action reject')
-        g1.local('gobgp policy add policy0 st0')
-        g1.local('gobgp neighbor {0} policy in add policy0'.format(g1.peers[e1]['neigh_addr'].split('/')[0]))
-
-        # this will be blocked
-        e1.add_route('192.168.100.0/24')
-        # this will pass
-        e1.add_route('192.168.10.0/24')
-
-        for c in [e1, q1, q2]:
-            g1.wait_for(BGP_FSM_ESTABLISHED, c)
-
-    @staticmethod
-    def check(env):
-        lookup_scenario('InPolicyReject').check(env)
-
-    @staticmethod
-    def executor(env):
-        lookup_scenario("InPolicyPrefixCondition").boot(env)
-        lookup_scenario("InPolicyPrefixCondition").setup(env)
-        lookup_scenario("InPolicyPrefixCondition").check(env)
-
-
 def ext_community_exists(path, extcomm):
     typ = extcomm.split(':')[0]
     value = ':'.join(extcomm.split(':')[1:])
@@ -2710,7 +2476,7 @@ class ImportPolicyExCommunityAdd(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         path = g1.get_adj_rib_out(q1)[0]
@@ -2724,6 +2490,7 @@ class ImportPolicyExCommunityAdd(object):
         lookup_scenario("ImportPolicyExCommunityAdd").setup(env)
         lookup_scenario("ImportPolicyExCommunityAdd").check(env)
         lookup_scenario("ImportPolicyExCommunityAdd").check2(env)
+
 
 @register_scenario
 class ImportPolicyExCommunityAdd2(object):
@@ -2766,7 +2533,7 @@ class ImportPolicyExCommunityAdd2(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         path = g1.get_adj_rib_out(q1)[0]
@@ -2828,7 +2595,7 @@ class ImportPolicyExCommunityMultipleAdd(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         path = g1.get_adj_rib_out(q1)[0]
@@ -2890,7 +2657,7 @@ class ExportPolicyExCommunityAdd(object):
     @staticmethod
     def check2(env):
         g1 = env.g1
-        e1 = env.e1
+        # e1 = env.e1
         q1 = env.q1
         q2 = env.q2
         path = g1.get_adj_rib_out(q1)[0]
@@ -2908,7 +2675,7 @@ class ExportPolicyExCommunityAdd(object):
         lookup_scenario("ExportPolicyExCommunityAdd").check2(env)
 
 
-class TestGoBGPBase():
+class TestGoBGPBase(unittest.TestCase):
 
     wait_per_retry = 5
     retry_limit = 10
@@ -2941,9 +2708,6 @@ class TestGoBGPBase():
 
 
 if __name__ == '__main__':
-    if os.geteuid() is not 0:
-        print "you are not root."
-        sys.exit(1)
     output = local("which docker 2>&1 > /dev/null ; echo $?", capture=True)
     if int(output) is not 0:
         print "docker not found"

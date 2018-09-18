@@ -13,7 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from base import *
+from __future__ import absolute_import
+
+import time
+
+from fabric import colors
+from fabric.api import local
+from fabric.utils import indent
+
+from lib.base import (
+    BGPContainer,
+    CmdBuffer,
+    try_several_times,
+    wait_for_completion,
+)
+
 
 class BirdContainer(BGPContainer):
 
@@ -35,6 +49,13 @@ class BirdContainer(BGPContainer):
         local(cmd)
         self.local('{0}/start.sh'.format(self.SHARED_VOLUME))
 
+    def _wait_for_boot(self):
+        def _f():
+            ret = self.local('birdc show status > /dev/null 2>&1; echo $?', capture=True)
+            return ret == '0'
+
+        return wait_for_completion(_f)
+
     def run(self):
         super(BirdContainer, self).run()
         self.reload_config()
@@ -52,7 +73,7 @@ class BirdContainer(BGPContainer):
             c << '}'
 
         with open('{0}/bird.conf'.format(self.config_dir), 'w') as f:
-            print colors.yellow('[{0}\'s new config]'.format(self.name))
+            print colors.yellow('[{0}\'s new bird.conf]'.format(self.name))
             print colors.yellow(indent(str(c)))
             f.writelines(str(c))
 
@@ -68,13 +89,16 @@ class BirdContainer(BGPContainer):
                     if 'bird' in line:
                         running = True
                 return running
+
             if _is_running():
                 self.local('birdc configure')
             else:
                 self._start_bird()
-            time.sleep(1)
+
+            self._wait_for_boot()
             if not _is_running():
                 raise RuntimeError()
+
         try_several_times(_reload)
 
 
@@ -98,6 +122,6 @@ class RawBirdContainer(BirdContainer):
 
     def create_config(self):
         with open('{0}/bird.conf'.format(self.config_dir), 'w') as f:
-            print colors.yellow('[{0}\'s new config]'.format(self.name))
+            print colors.yellow('[{0}\'s new bird.conf]'.format(self.name))
             print colors.yellow(indent(self.config))
             f.writelines(self.config)

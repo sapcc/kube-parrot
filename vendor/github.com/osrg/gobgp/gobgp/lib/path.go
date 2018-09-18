@@ -57,12 +57,14 @@ func serialize_path(rf C.int, input *C.char) *C.path {
 		return nil
 	}
 	path := C.new_path()
-	if len(p.Nlri) > 0 {
-		path.nlri.len = C.int(len(p.Nlri))
-		path.nlri.value = C.CString(string(p.Nlri))
+	if nlri := p.GetNlri(); nlri != nil {
+		buf, _ := nlri.Serialize()
+		path.nlri.len = C.int(len(buf))
+		path.nlri.value = C.CString(string(buf))
 	}
-	for _, attr := range p.Pattrs {
-		C.append_path_attribute(path, C.int(len(attr)), C.CString(string(attr)))
+	for _, attr := range p.GetPathAttrs() {
+		buf, _ := attr.Serialize()
+		C.append_path_attribute(path, C.int(len(buf)), C.CString(string(buf)))
 	}
 	return path
 }

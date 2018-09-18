@@ -18,25 +18,28 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+
 	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/packet/bgp"
+
+	"github.com/golang/protobuf/ptypes/any"
 	"github.com/spf13/cobra"
-	"golang.org/x/net/context"
-	"sort"
-	"strings"
 )
 
 func getVrfs() (vrfs, error) {
-	rsp, err := client.GetVrf(context.Background(), &api.GetVrfRequest{})
+	ret, err := client.GetVRF()
 	if err != nil {
 		return nil, err
 	}
-	sort.Sort(vrfs(rsp.Vrfs))
-	return rsp.Vrfs, nil
+	sort.Sort(vrfs(ret))
+	return ret, nil
 }
 
 func showVrfs() error {
-	maxLens := []int{20, 20, 20, 20}
+	maxLens := []int{20, 20, 20, 20, 5}
 	vrfs, err := getVrfs()
 	if err != nil {
 		return err
@@ -55,35 +58,45 @@ func showVrfs() error {
 	lines := make([][]string, 0, len(vrfs))
 	for _, v := range vrfs {
 		name := v.Name
-		rd := bgp.GetRouteDistinguisher(v.Rd).String()
+		rd, err := api.UnmarshalRD(v.Rd)
+		if err != nil {
+			return err
+		}
+		rdStr := rd.String()
 
-		f := func(bufs [][]byte) (string, error) {
-			ret := make([]string, 0, len(bufs))
-			for _, rt := range bufs {
-				r, err := bgp.ParseExtended(rt)
+		f := func(rts []*any.Any) (string, error) {
+			ret := make([]string, 0, len(rts))
+			for _, an := range rts {
+				rt, err := api.UnmarshalRT(an)
 				if err != nil {
 					return "", err
 				}
-				ret = append(ret, r.String())
+				ret = append(ret, rt.String())
 			}
 			return strings.Join(ret, ", "), nil
 		}
 
-		importRts, _ := f(v.ImportRt)
-		exportRts, _ := f(v.ExportRt)
-		lines = append(lines, []string{name, rd, importRts, exportRts})
+		importRts, err := f(v.ImportRt)
+		if err != nil {
+			return err
+		}
+		exportRts, err := f(v.ExportRt)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, []string{name, rdStr, importRts, exportRts, fmt.Sprintf("%d", v.Id)})
 
-		for i, v := range []int{len(name), len(rd), len(importRts), len(exportRts)} {
+		for i, v := range []int{len(name), len(rdStr), len(importRts), len(exportRts)} {
 			if v > maxLens[i] {
 				maxLens[i] = v + 4
 			}
 		}
 
 	}
-	format := fmt.Sprintf("  %%-%ds %%-%ds %%-%ds %%-%ds\n", maxLens[0], maxLens[1], maxLens[2], maxLens[3])
-	fmt.Printf(format, "Name", "RD", "Import RT", "Export RT")
+	format := fmt.Sprintf("  %%-%ds %%-%ds %%-%ds %%-%ds %%-%ds\n", maxLens[0], maxLens[1], maxLens[2], maxLens[3], maxLens[4])
+	fmt.Printf(format, "Name", "RD", "Import RT", "Export RT", "ID")
 	for _, l := range lines {
-		fmt.Printf(format, l[0], l[1], l[2], l[3])
+		fmt.Printf(format, l[0], l[1], l[2], l[3], l[4])
 	}
 	return nil
 }
@@ -96,18 +109,23 @@ func modVrf(typ string, args []string) error {
 	var err error
 	switch typ {
 	case CMD_ADD:
-		if len(args) < 6 || args[1] != "rd" || args[3] != "rt" {
-			return fmt.Errorf("Usage: gobgp vrf add <vrf name> rd <rd> rt { import | export | both } <rt>...")
+		a, err := extractReserved(args, map[string]int{
+			"rd": PARAM_SINGLE,
+			"rt": PARAM_LIST,
+			"id": PARAM_SINGLE})
+		if err != nil || len(a[""]) != 1 || len(a["rd"]) != 1 || len(a["rt"]) < 2 {
+			return fmt.Errorf("Usage: gobgp vrf add <vrf name> [ id <id> ] rd <rd> rt { import | export | both } <rt>...")
 		}
-		name := args[0]
-		rd, err := bgp.ParseRouteDistinguisher(args[2])
+		name := a[""][0]
+		var rd bgp.RouteDistinguisherInterface
+		rd, err = bgp.ParseRouteDistinguisher(a["rd"][0])
 		if err != nil {
 			return err
 		}
 		cur := ""
-		importRt := make([][]byte, 0)
-		exportRt := make([][]byte, 0)
-		for _, elem := range args[4:] {
+		importRt := make([]bgp.ExtendedCommunityInterface, 0)
+		exportRt := make([]bgp.ExtendedCommunityInterface, 0)
+		for _, elem := range a["rt"] {
 			if elem == "import" || elem == "export" || elem == "both" {
 				cur = elem
 				continue
@@ -116,48 +134,38 @@ func modVrf(typ string, args []string) error {
 			if err != nil {
 				return err
 			}
-			buf, err := rt.Serialize()
-			if err != nil {
-				return err
-			}
 			switch cur {
 			case "import":
-				importRt = append(importRt, buf)
+				importRt = append(importRt, rt)
 			case "export":
-				exportRt = append(exportRt, buf)
+				exportRt = append(exportRt, rt)
 			case "both":
-				importRt = append(importRt, buf)
-				exportRt = append(exportRt, buf)
+				importRt = append(importRt, rt)
+				exportRt = append(exportRt, rt)
 			default:
 				return fmt.Errorf("Usage: gobgp vrf add <vrf name> rd <rd> rt { import | export | both } <rt>...")
 			}
 		}
-		buf, _ := rd.Serialize()
-		arg := &api.AddVrfRequest{
-			Vrf: &api.Vrf{
-				Name:     name,
-				Rd:       buf,
-				ImportRt: importRt,
-				ExportRt: exportRt,
-			},
+		var id uint64
+		if len(a["id"]) > 0 {
+			id, err = strconv.ParseUint(a["id"][0], 10, 32)
+			if err != nil {
+				return err
+			}
 		}
-		_, err = client.AddVrf(context.Background(), arg)
+		if err := client.AddVRF(name, int(id), rd, importRt, exportRt); err != nil {
+			return err
+		}
 	case CMD_DEL:
 		if len(args) != 1 {
 			return fmt.Errorf("Usage: gobgp vrf del <vrf name>")
 		}
-		arg := &api.DeleteVrfRequest{
-			Vrf: &api.Vrf{
-				Name: args[0],
-			},
-		}
-		_, err = client.DeleteVrf(context.Background(), arg)
+		err = client.DeleteVRF(args[0])
 	}
 	return err
 }
 
 func NewVrfCmd() *cobra.Command {
-
 	ribCmd := &cobra.Command{
 		Use: CMD_RIB,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -177,7 +185,7 @@ func NewVrfCmd() *cobra.Command {
 		cmd := &cobra.Command{
 			Use: v,
 			Run: func(cmd *cobra.Command, args []string) {
-				err := modPath(api.Resource_VRF, args[len(args)-1], cmd.Use, args[:len(args)-1])
+				err := modPath(CMD_VRF, args[len(args)-1], cmd.Use, args[:len(args)-1])
 				if err != nil {
 					exitWithError(err)
 				}
@@ -186,8 +194,39 @@ func NewVrfCmd() *cobra.Command {
 		ribCmd.AddCommand(cmd)
 	}
 
+	neighborCmd := &cobra.Command{
+		Use: CMD_NEIGHBOR,
+		Run: func(cmd *cobra.Command, args []string) {
+			var err error
+			if len(args) == 1 {
+				var vs vrfs
+				vs, err = getVrfs()
+				if err != nil {
+					exitWithError(err)
+				}
+				found := false
+				for _, v := range vs {
+					if v.Name == args[0] {
+						found = true
+						break
+					}
+				}
+				if !found {
+					err = fmt.Errorf("vrf %s not found", args[0])
+				} else {
+					err = showNeighbors(args[0])
+				}
+			} else {
+				err = fmt.Errorf("usage: gobgp vrf <vrf-name> neighbor")
+			}
+			if err != nil {
+				exitWithError(err)
+			}
+		},
+	}
+
 	vrfCmdImpl := &cobra.Command{}
-	vrfCmdImpl.AddCommand(ribCmd)
+	vrfCmdImpl.AddCommand(ribCmd, neighborCmd)
 
 	vrfCmd := &cobra.Command{
 		Use: CMD_VRF,

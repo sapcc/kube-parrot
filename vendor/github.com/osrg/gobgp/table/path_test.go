@@ -2,10 +2,10 @@
 package table
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
+	"github.com/osrg/gobgp/config"
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/stretchr/testify/assert"
 )
@@ -116,9 +116,8 @@ func TestPathPrependAsnToExistingSeqAttr(t *testing.T) {
 	peer := PathCreatePeer()
 	p := NewPath(peer[0], update.NLRI[0], false, update.PathAttributes, time.Now(), false)
 
-	p.PrependAsn(65000, 1)
+	p.PrependAsn(65000, 1, false)
 	assert.Equal([]uint32{65000, 65001, 65002, 65003, 65004, 65005, 0, 0, 0}, p.GetAsSeqList())
-	fmt.Printf("asns: %v", p.GetAsSeqList())
 }
 
 func TestPathPrependAsnToNewAsPathAttr(t *testing.T) {
@@ -139,7 +138,7 @@ func TestPathPrependAsnToNewAsPathAttr(t *testing.T) {
 	p := NewPath(peer[0], update.NLRI[0], false, update.PathAttributes, time.Now(), false)
 
 	asn := uint32(65000)
-	p.PrependAsn(asn, 1)
+	p.PrependAsn(asn, 1, false)
 	assert.Equal([]uint32{asn}, p.GetAsSeqList())
 }
 
@@ -167,9 +166,8 @@ func TestPathPrependAsnToNewAsPathSeq(t *testing.T) {
 	p := NewPath(peer[0], update.NLRI[0], false, update.PathAttributes, time.Now(), false)
 
 	asn := uint32(65000)
-	p.PrependAsn(asn, 1)
+	p.PrependAsn(asn, 1, false)
 	assert.Equal([]uint32{asn, 0, 0, 0}, p.GetAsSeqList())
-	fmt.Printf("asns: %v", p.GetAsSeqList())
 }
 
 func TestPathPrependAsnToEmptyAsPathAttr(t *testing.T) {
@@ -197,9 +195,8 @@ func TestPathPrependAsnToEmptyAsPathAttr(t *testing.T) {
 	p := NewPath(peer[0], update.NLRI[0], false, update.PathAttributes, time.Now(), false)
 
 	asn := uint32(65000)
-	p.PrependAsn(asn, 1)
+	p.PrependAsn(asn, 1, false)
 	assert.Equal([]uint32{asn, 0, 0, 0}, p.GetAsSeqList())
-	fmt.Printf("asns: %v", p.GetAsSeqList())
 }
 
 func TestPathPrependAsnToFullPathAttr(t *testing.T) {
@@ -236,9 +233,8 @@ func TestPathPrependAsnToFullPathAttr(t *testing.T) {
 	for _, v := range asns {
 		expected = append(expected, uint32(v))
 	}
-	p.PrependAsn(65000, 2)
+	p.PrependAsn(65000, 2, false)
 	assert.Equal(append(expected, []uint32{0, 0, 0}...), p.GetAsSeqList())
-	fmt.Printf("asns: %v", p.GetAsSeqList())
 }
 
 func TestGetPathAttrs(t *testing.T) {
@@ -330,4 +326,39 @@ func updateMsgP3() *bgp.BGPMessage {
 	w1 := bgp.NewIPAddrPrefix(23, "40.40.40.0")
 	withdrawnRoutes := []*bgp.IPAddrPrefix{w1}
 	return bgp.NewBGPUpdateMessage(withdrawnRoutes, pathAttributes, nlri)
+}
+
+func TestRemovePrivateAS(t *testing.T) {
+	aspathParam := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{64512, 64513, 1, 2})}
+	aspath := bgp.NewPathAttributeAsPath(aspathParam)
+	nlri := bgp.NewIPAddrPrefix(24, "30.30.30.0")
+	path := NewPath(nil, nlri, false, []bgp.PathAttributeInterface{aspath}, time.Now(), false)
+	path.RemovePrivateAS(10, config.REMOVE_PRIVATE_AS_OPTION_ALL)
+	list := path.GetAsList()
+	assert.Equal(t, len(list), 2)
+	assert.Equal(t, list[0], uint32(1))
+	assert.Equal(t, list[1], uint32(2))
+
+	path = NewPath(nil, nlri, false, []bgp.PathAttributeInterface{aspath}, time.Now(), false)
+	path.RemovePrivateAS(10, config.REMOVE_PRIVATE_AS_OPTION_REPLACE)
+	list = path.GetAsList()
+	assert.Equal(t, len(list), 4)
+	assert.Equal(t, list[0], uint32(10))
+	assert.Equal(t, list[1], uint32(10))
+	assert.Equal(t, list[2], uint32(1))
+	assert.Equal(t, list[3], uint32(2))
+}
+
+func TestReplaceAS(t *testing.T) {
+	aspathParam := []bgp.AsPathParamInterface{bgp.NewAs4PathParam(2, []uint32{64512, 64513, 1, 2})}
+	aspath := bgp.NewPathAttributeAsPath(aspathParam)
+	nlri := bgp.NewIPAddrPrefix(24, "30.30.30.0")
+	path := NewPath(nil, nlri, false, []bgp.PathAttributeInterface{aspath}, time.Now(), false)
+	path = path.ReplaceAS(10, 1)
+	list := path.GetAsList()
+	assert.Equal(t, len(list), 4)
+	assert.Equal(t, list[0], uint32(64512))
+	assert.Equal(t, list[1], uint32(64513))
+	assert.Equal(t, list[2], uint32(10))
+	assert.Equal(t, list[3], uint32(2))
 }

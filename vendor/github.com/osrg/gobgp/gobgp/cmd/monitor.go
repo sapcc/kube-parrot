@@ -18,38 +18,84 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/osrg/gobgp/api"
-	"github.com/osrg/gobgp/packet/bgp"
-	"github.com/spf13/cobra"
-	"golang.org/x/net/context"
 	"io"
 	"net"
+
+	"github.com/spf13/cobra"
+
+	"github.com/osrg/gobgp/packet/bgp"
+	"github.com/osrg/gobgp/table"
 )
+
+func makeMonitorRouteArgs(p *table.Path, showIdentifier bgp.BGPAddPathMode) []interface{} {
+	pathStr := make([]interface{}, 0)
+
+	// Title
+	title := "ROUTE"
+	if p.IsWithdraw {
+		title = "DELROUTE"
+	}
+	pathStr = append(pathStr, title)
+
+	// NLRI
+	// If Add-Path required, append Path Identifier.
+	nlri := p.GetNlri()
+	if showIdentifier != bgp.BGP_ADD_PATH_NONE {
+		pathStr = append(pathStr, nlri.PathIdentifier())
+	}
+	pathStr = append(pathStr, nlri)
+
+	// Next Hop
+	nexthop := "fictitious"
+	if n := p.GetNexthop(); n != nil {
+		nexthop = p.GetNexthop().String()
+	}
+	pathStr = append(pathStr, nexthop)
+
+	// AS_PATH
+	pathStr = append(pathStr, p.GetAsString())
+
+	// Path Attributes
+	pathStr = append(pathStr, getPathAttributeString(p))
+
+	return pathStr
+}
+
+func monitorRoute(pathList []*table.Path, showIdentifier bgp.BGPAddPathMode) {
+	var pathStrs [][]interface{}
+
+	for _, p := range pathList {
+		pathStrs = append(pathStrs, makeMonitorRouteArgs(p, showIdentifier))
+	}
+
+	format := "[%s] %s via %s aspath [%s] attrs %s\n"
+	if showIdentifier != bgp.BGP_ADD_PATH_NONE {
+		format = "[%s] %d:%s via %s aspath [%s] attrs %s\n"
+	}
+	for _, pathStr := range pathStrs {
+		fmt.Printf(format, pathStr...)
+	}
+}
 
 func NewMonitorCmd() *cobra.Command {
 
-	monitor := func(arg *gobgpapi.Table) {
-		stream, err := client.MonitorRib(context.Background(), arg)
-		if err != nil {
-			exitWithError(err)
-		}
+	var current bool
+
+	monitor := func(recver interface {
+		Recv() (*table.Destination, error)
+	}, showIdentifier bgp.BGPAddPathMode) {
 		for {
-			d, err := stream.Recv()
+			dst, err := recver.Recv()
 			if err == io.EOF {
 				break
 			} else if err != nil {
 				exitWithError(err)
 			}
-			dst, err := d.ToNativeDestination()
-			if err != nil {
-				exitWithError(err)
-			}
-
 			if globalOpts.Json {
 				j, _ := json.Marshal(dst.GetAllKnownPathList())
 				fmt.Println(string(j))
 			} else {
-				ShowRoute(dst.GetAllKnownPathList(), false, false, false, true, false)
+				monitorRoute(dst.GetAllKnownPathList(), showIdentifier)
 			}
 		}
 	}
@@ -61,11 +107,11 @@ func NewMonitorCmd() *cobra.Command {
 			if err != nil {
 				exitWithError(err)
 			}
-			arg := &gobgpapi.Table{
-				Type:   gobgpapi.Resource_GLOBAL,
-				Family: uint32(family),
+			recver, err := client.MonitorRIB(family, current)
+			if err != nil {
+				exitWithError(err)
 			}
-			monitor(arg)
+			monitor(recver, bgp.BGP_ADD_PATH_NONE)
 		},
 	}
 	ribCmd.PersistentFlags().StringVarP(&subOpts.AddressFamily, "address-family", "a", "", "address family")
@@ -76,18 +122,14 @@ func NewMonitorCmd() *cobra.Command {
 	globalCmd.AddCommand(ribCmd)
 
 	neighborCmd := &cobra.Command{
-		Use: CMD_NEIGHBOR,
+		Use:  fmt.Sprintf("%s [<neighbor address>]", CMD_NEIGHBOR),
+		Args: cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			var arg *gobgpapi.Arguments
+			name := ""
 			if len(args) > 0 {
-				arg = &gobgpapi.Arguments{
-					Name: args[0],
-				}
-			} else {
-				arg = &gobgpapi.Arguments{}
+				name = args[0]
 			}
-
-			stream, err := client.MonitorPeerState(context.Background(), arg)
+			stream, err := client.MonitorNeighborState(name, current)
 			if err != nil {
 				exitWithError(err)
 			}
@@ -102,7 +144,11 @@ func NewMonitorCmd() *cobra.Command {
 					j, _ := json.Marshal(s)
 					fmt.Println(string(j))
 				} else {
-					fmt.Printf("[NEIGH] %s fsm: %s admin: %s\n", s.Conf.NeighborAddress, s.Info.BgpState, s.Info.AdminState)
+					addr := s.State.NeighborAddress
+					if s.Config.NeighborInterface != "" {
+						addr = fmt.Sprintf("%s(%s)", addr, s.Config.NeighborInterface)
+					}
+					fmt.Printf("[NEIGH] %s fsm: %s admin: %s\n", addr, s.State.SessionState, s.State.AdminState)
 				}
 			}
 		},
@@ -123,12 +169,11 @@ func NewMonitorCmd() *cobra.Command {
 			if err != nil {
 				exitWithError(err)
 			}
-			arg := &gobgpapi.Table{
-				Type:   gobgpapi.Resource_ADJ_IN,
-				Family: uint32(family),
-				Name:   name,
+			recver, err := client.MonitorAdjRIBIn(name, family, current)
+			if err != nil {
+				exitWithError(err)
 			}
-			monitor(arg)
+			monitor(recver, bgp.BGP_ADD_PATH_RECEIVE)
 		},
 	}
 	adjInCmd.PersistentFlags().StringVarP(&subOpts.AddressFamily, "address-family", "a", "", "address family")
@@ -139,6 +184,8 @@ func NewMonitorCmd() *cobra.Command {
 	monitorCmd.AddCommand(globalCmd)
 	monitorCmd.AddCommand(neighborCmd)
 	monitorCmd.AddCommand(adjInCmd)
+
+	monitorCmd.PersistentFlags().BoolVarP(&current, "current", "", false, "dump current contents")
 
 	return monitorCmd
 }

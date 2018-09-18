@@ -17,41 +17,38 @@ package cmd
 
 import (
 	"fmt"
-	api "github.com/osrg/gobgp/api"
-	"github.com/osrg/gobgp/packet/bgp"
-	"github.com/osrg/gobgp/packet/mrt"
-	"github.com/osrg/gobgp/table"
-	"github.com/spf13/cobra"
-	"golang.org/x/net/context"
 	"io"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/osrg/gobgp/packet/bgp"
+	"github.com/osrg/gobgp/packet/mrt"
+	"github.com/osrg/gobgp/table"
 )
 
-func injectMrt(r string, filename string, count int, skip int, onlyBest bool) error {
+func injectMrt() error {
 
-	var resource api.Resource
-	switch r {
-	case CMD_GLOBAL:
-		resource = api.Resource_GLOBAL
-	default:
-		return fmt.Errorf("unknown resource type: %s", r)
-	}
-
-	file, err := os.Open(filename)
+	file, err := os.Open(mrtOpts.Filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %s", err)
 	}
 
-	idx := 0
+	if mrtOpts.NextHop != nil && !mrtOpts.SkipV4 && !mrtOpts.SkipV6 {
+		fmt.Println("You should probably specify either --no-ipv4 or --no-ipv6 when overwriting nexthop, unless your dump contains only one type of routes")
+	}
 
-	ch := make(chan *api.InjectMrtRequest, 1<<20)
+	var idx int64
+	if mrtOpts.QueueSize < 1 {
+		return fmt.Errorf("Specified queue size is smaller than 1, refusing to run with unbounded memory usage")
+	}
 
+	ch := make(chan []*table.Path, mrtOpts.QueueSize)
 	go func() {
 
 		var peers []*mrt.Peer
-
 		for {
 			buf := make([]byte, mrt.MRT_COMMON_HEADER_LEN)
 			_, err := file.Read(buf)
@@ -85,17 +82,22 @@ func injectMrt(r string, filename string, count int, skip int, onlyBest bool) er
 
 			if msg.Header.Type == mrt.TABLE_DUMPv2 {
 				subType := mrt.MRTSubTypeTableDumpv2(msg.Header.SubType)
-				var rf bgp.RouteFamily
 				switch subType {
 				case mrt.PEER_INDEX_TABLE:
 					peers = msg.Body.(*mrt.PeerIndexTable).Peers
 					continue
-				case mrt.RIB_IPV4_UNICAST:
-					rf = bgp.RF_IPv4_UC
-				case mrt.RIB_IPV6_UNICAST:
-					rf = bgp.RF_IPv6_UC
+				case mrt.RIB_IPV4_UNICAST, mrt.RIB_IPV4_UNICAST_ADDPATH:
+					if mrtOpts.SkipV4 {
+						continue
+					}
+				case mrt.RIB_IPV6_UNICAST, mrt.RIB_IPV6_UNICAST_ADDPATH:
+					if mrtOpts.SkipV6 {
+						continue
+					}
+				case mrt.GEO_PEER_TABLE:
+					fmt.Printf("WARNING: Skipping GEO_PEER_TABLE: %s", msg.Body.(*mrt.GeoPeerTable))
 				default:
-					exitWithError(fmt.Errorf("unsupported subType: %s", subType))
+					exitWithError(fmt.Errorf("unsupported subType: %v", subType))
 				}
 
 				if peers == nil {
@@ -105,81 +107,55 @@ func injectMrt(r string, filename string, count int, skip int, onlyBest bool) er
 				rib := msg.Body.(*mrt.Rib)
 				nlri := rib.Prefix
 
-				paths := make([]*api.Path, 0, len(rib.Entries))
+				paths := make([]*table.Path, 0, len(rib.Entries))
 
 				for _, e := range rib.Entries {
 					if len(peers) < int(e.PeerIndex) {
 						exitWithError(fmt.Errorf("invalid peer index: %d (PEER_INDEX_TABLE has only %d peers)\n", e.PeerIndex, len(peers)))
 					}
+					source := &table.PeerInfo{
+						AS: peers[e.PeerIndex].AS,
+						ID: peers[e.PeerIndex].BgpId,
+					}
+					t := time.Unix(int64(e.OriginatedTime), 0)
 
-					if !onlyBest {
-						path := &api.Path{
-							Pattrs:             make([][]byte, 0),
-							NoImplicitWithdraw: true,
-							SourceAsn:          peers[e.PeerIndex].AS,
-							SourceId:           peers[e.PeerIndex].BgpId.String(),
-						}
-
-						if rf == bgp.RF_IPv4_UC {
-							path.Nlri, _ = nlri.Serialize()
-						}
-
-						for _, p := range e.PathAttributes {
-							b, err := p.Serialize()
-							if err != nil {
-								continue
+					switch subType {
+					case mrt.RIB_IPV4_UNICAST, mrt.RIB_IPV4_UNICAST_ADDPATH:
+						paths = append(paths, table.NewPath(source, nlri, false, e.PathAttributes, t, false))
+					default:
+						attrs := make([]bgp.PathAttributeInterface, 0, len(e.PathAttributes))
+						for _, attr := range e.PathAttributes {
+							if attr.GetType() != bgp.BGP_ATTR_TYPE_MP_REACH_NLRI {
+								attrs = append(attrs, attr)
+							} else {
+								a := attr.(*bgp.PathAttributeMpReachNLRI)
+								attrs = append(attrs, bgp.NewPathAttributeMpReachNLRI(a.Nexthop.String(), []bgp.AddrPrefixInterface{nlri}))
 							}
-							path.Pattrs = append(path.Pattrs, b)
 						}
-
-						paths = append(paths, path)
+						paths = append(paths, table.NewPath(source, nlri, false, attrs, t, false))
 					}
 				}
-				if onlyBest {
-					paths = func() []*api.Path {
-						dst := table.NewDestination(nlri)
-						pathList := make([]*table.Path, 0, len(rib.Entries))
-						for _, e := range rib.Entries {
-							p := table.NewPath(&table.PeerInfo{AS: peers[e.PeerIndex].AS, ID: peers[e.PeerIndex].BgpId}, nlri, false, e.PathAttributes, time.Unix(int64(e.OriginatedTime), 0), false)
-							dst.AddNewPath(p)
-							pathList = append(pathList, p)
-						}
-						best, _, _ := dst.Calculate([]string{table.GLOBAL_RIB_NAME})
-						for _, p := range pathList {
-							if p == best[table.GLOBAL_RIB_NAME] {
-								nb, _ := nlri.Serialize()
-								return []*api.Path{&api.Path{
-									Nlri:               nb,
-									NoImplicitWithdraw: true,
-									SourceAsn:          p.GetSource().AS,
-									SourceId:           p.GetSource().ID.String(),
-									Pattrs: func() [][]byte {
-										attrs := make([][]byte, 0)
-										for _, a := range p.GetPathAttrs() {
-											if b, e := a.Serialize(); e == nil {
+				if mrtOpts.NextHop != nil {
+					for _, p := range paths {
+						p.SetNexthop(mrtOpts.NextHop)
+					}
+				}
 
-												attrs = append(attrs, b)
-											}
-										}
-										return attrs
-									}(),
-								}}
-							}
-						}
+				if mrtOpts.Best {
+					dst := table.NewDestination(nlri, 0, paths[1:]...)
+					best, _, _ := dst.Calculate(paths[0]).GetChanges(table.GLOBAL_RIB_NAME, 0, false)
+					if best == nil {
 						exitWithError(fmt.Errorf("Can't find the best %v", nlri))
-						return []*api.Path{}
-					}()
+					}
+					paths = []*table.Path{best}
 				}
 
-				if idx >= skip {
-					ch <- &api.InjectMrtRequest{
-						Resource: resource,
-						Paths:    paths,
-					}
+				if idx >= mrtOpts.RecordSkip {
+					ch <- paths
 				}
 
 				idx += 1
-				if idx == count+skip {
+				if idx == mrtOpts.RecordCount+mrtOpts.RecordSkip {
 					break
 				}
 			}
@@ -188,20 +164,19 @@ func injectMrt(r string, filename string, count int, skip int, onlyBest bool) er
 		close(ch)
 	}()
 
-	stream, err := client.InjectMrt(context.Background())
+	stream, err := client.AddPathByStream()
 	if err != nil {
-		return fmt.Errorf("failed to modpath: %s", err)
+		return fmt.Errorf("failed to add path: %s", err)
 	}
 
-	for arg := range ch {
-		err = stream.Send(arg)
+	for paths := range ch {
+		err = stream.Send(paths...)
 		if err != nil {
 			return fmt.Errorf("failed to send: %s", err)
 		}
 	}
 
-	_, err = stream.CloseAndRecv()
-	if err != nil {
+	if err := stream.Close(); err != nil {
 		return fmt.Errorf("failed to send: %s", err)
 	}
 	return nil
@@ -214,23 +189,24 @@ func NewMrtCmd() *cobra.Command {
 			if len(args) < 1 {
 				exitWithError(fmt.Errorf("usage: gobgp mrt inject global <filename> [<count> [<skip>]]"))
 			}
-			filename := args[0]
-			count := -1
-			skip := 0
+			mrtOpts.Filename = args[0]
 			if len(args) > 1 {
 				var err error
-				count, err = strconv.Atoi(args[1])
+				mrtOpts.RecordCount, err = strconv.ParseInt(args[1], 10, 64)
 				if err != nil {
 					exitWithError(fmt.Errorf("invalid count value: %s", args[1]))
 				}
 				if len(args) > 2 {
-					skip, err = strconv.Atoi(args[2])
+					mrtOpts.RecordSkip, err = strconv.ParseInt(args[2], 10, 64)
 					if err != nil {
 						exitWithError(fmt.Errorf("invalid skip value: %s", args[2]))
 					}
 				}
+			} else {
+				mrtOpts.RecordCount = -1
+				mrtOpts.RecordSkip = 0
 			}
-			err := injectMrt(CMD_GLOBAL, filename, count, skip, mrtOpts.Best)
+			err := injectMrt()
 			if err != nil {
 				exitWithError(err)
 			}
@@ -248,5 +224,9 @@ func NewMrtCmd() *cobra.Command {
 	mrtCmd.AddCommand(injectCmd)
 
 	mrtCmd.PersistentFlags().BoolVarP(&mrtOpts.Best, "only-best", "", false, "inject only best paths")
+	mrtCmd.PersistentFlags().BoolVarP(&mrtOpts.SkipV4, "no-ipv4", "", false, "Do not import IPv4 routes")
+	mrtCmd.PersistentFlags().BoolVarP(&mrtOpts.SkipV6, "no-ipv6", "", false, "Do not import IPv6 routes")
+	mrtCmd.PersistentFlags().IntVarP(&mrtOpts.QueueSize, "queue-size", "", 1<<10, "Maximum number of updates to keep queued")
+	mrtCmd.PersistentFlags().IPVarP(&mrtOpts.NextHop, "nexthop", "", nil, "Overwrite nexthop")
 	return mrtCmd
 }

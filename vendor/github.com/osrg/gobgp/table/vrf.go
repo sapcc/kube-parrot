@@ -16,7 +16,6 @@
 package table
 
 import (
-	"fmt"
 	"github.com/osrg/gobgp/packet/bgp"
 )
 
@@ -26,40 +25,12 @@ type Vrf struct {
 	Rd       bgp.RouteDistinguisherInterface
 	ImportRt []bgp.ExtendedCommunityInterface
 	ExportRt []bgp.ExtendedCommunityInterface
-	LabelMap map[string]uint32
-}
-
-func (v *Vrf) ToGlobalPath(path *Path, label uint32) error {
-	nlri := path.GetNlri()
-	switch rf := path.GetRouteFamily(); rf {
-	case bgp.RF_IPv4_UC:
-		n := nlri.(*bgp.IPAddrPrefix)
-		path.OriginInfo().nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(label), v.Rd)
-	case bgp.RF_IPv6_UC:
-		n := nlri.(*bgp.IPv6AddrPrefix)
-		path.OriginInfo().nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(label), v.Rd)
-	case bgp.RF_EVPN:
-		n := nlri.(*bgp.EVPNNLRI)
-		switch n.RouteType {
-		case bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT:
-			n.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute).RD = v.Rd
-		case bgp.EVPN_INCLUSIVE_MULTICAST_ETHERNET_TAG:
-			n.RouteTypeData.(*bgp.EVPNMulticastEthernetTagRoute).RD = v.Rd
-		}
-	default:
-		return fmt.Errorf("unsupported route family for vrf: %s", rf)
-	}
-	path.SetExtCommunities(v.ExportRt, false)
-	return nil
 }
 
 func (v *Vrf) Clone() *Vrf {
 	f := func(rt []bgp.ExtendedCommunityInterface) []bgp.ExtendedCommunityInterface {
 		l := make([]bgp.ExtendedCommunityInterface, 0, len(rt))
-		for _, v := range rt {
-			l = append(l, v)
-		}
-		return l
+		return append(l, rt...)
 	}
 	return &Vrf{
 		Name:     v.Name,
@@ -67,13 +38,6 @@ func (v *Vrf) Clone() *Vrf {
 		Rd:       v.Rd,
 		ImportRt: f(v.ImportRt),
 		ExportRt: f(v.ExportRt),
-		LabelMap: func() map[string]uint32 {
-			m := make(map[string]uint32)
-			for k, v := range v.LabelMap {
-				m[k] = v
-			}
-			return m
-		}(),
 	}
 }
 
