@@ -20,10 +20,10 @@ type Server struct {
 	routerId     string
 	localAddress string
 
-	ExternalIPRoutes    *ExternalIPRoutesStore
-	NodePodSubnetRoutes *NodePodSubnetRoutesStore
+	ExternalIPRoutes        *ExternalIPRoutesStore
+	NodePodSubnetRoutes     *NodePodSubnetRoutesStore
 	NodeServiceSubnetRoutes *NodeServiceSubnetRoutesStore
-	APIServerRoutes     *APIServerRoutesStore
+	APIServerRoutes         *APIServerRoutesStore
 }
 
 func NewServer(localAddress net.IP, as int, port int, masterIP net.IP) *Server {

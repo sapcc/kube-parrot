@@ -11,8 +11,9 @@ import (
 	"github.com/sapcc/kube-parrot/pkg/forked/util"
 	"github.com/sapcc/kube-parrot/pkg/types"
 	"github.com/sapcc/kube-parrot/pkg/util"
-	"k8s.io/client-go/1.5/pkg/api/v1"
-	"k8s.io/client-go/1.5/tools/cache"
+
+	"k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
 type ExternalServicesController struct {

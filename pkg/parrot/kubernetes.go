@@ -3,8 +3,8 @@ package parrot
 import (
 	"github.com/golang/glog"
 
-	"k8s.io/client-go/1.5/kubernetes"
-	"k8s.io/client-go/1.5/tools/clientcmd"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 func NewClient(kubeconfig string) *kubernetes.Clientset {

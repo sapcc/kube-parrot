@@ -4,12 +4,10 @@ import (
 	"reflect"
 	"time"
 
-	"k8s.io/client-go/1.5/kubernetes"
-	"k8s.io/client-go/1.5/pkg/api"
-	"k8s.io/client-go/1.5/pkg/api/v1"
-	"k8s.io/client-go/1.5/pkg/runtime"
-	"k8s.io/client-go/1.5/pkg/watch"
-	"k8s.io/client-go/1.5/tools/cache"
+	"k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/kubernetes"
+	informers_v1 "k8s.io/client-go/informers/core/v1"
 )
 
 // PodInformer is type of SharedIndexInformer which watches and lists all pods.
@@ -47,21 +45,12 @@ func (f *podInformer) Lister() *StoreToPodLister {
 }
 
 func NewPodInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	sharedIndexInformer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-				return client.Core().Pods(api.NamespaceAll).List(options)
-			},
-			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				return client.Core().Pods(api.NamespaceAll).Watch(options)
-			},
-		},
-		&v1.Pod{},
+	return informers_v1.NewPodInformer(
+		client,
+		"",
 		resyncPeriod,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
-
-	return sharedIndexInformer
 }
 
 type EndpointInformer interface {
@@ -94,21 +83,12 @@ func (f *endpointInformer) Lister() *StoreToEndpointsLister {
 }
 
 func NewEndpointInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	sharedIndexInformer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-				return client.Core().Endpoints(api.NamespaceAll).List(options)
-			},
-			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				return client.Core().Endpoints(api.NamespaceAll).Watch(options)
-			},
-		},
-		&v1.Endpoints{},
+	return informers_v1.NewEndpointsInformer(
+		client,
+		"",
 		resyncPeriod,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
-
-	return sharedIndexInformer
 }
 
 type ServiceInformer interface {
@@ -141,21 +121,12 @@ func (f *serviceInformer) Lister() *StoreToServiceLister {
 }
 
 func NewServiceInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	sharedIndexInformer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-				return client.Core().Services(api.NamespaceAll).List(options)
-			},
-			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				return client.Core().Services(api.NamespaceAll).Watch(options)
-			},
-		},
-		&v1.Service{},
+	return informers_v1.NewServiceInformer(
+		client,
+		"",
 		resyncPeriod,
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 	)
-
-	return sharedIndexInformer
 }
 
 type NodeInformer interface {
@@ -190,20 +161,10 @@ func (f *nodeInformer) Lister() *StoreToNodeLister {
 	return &StoreToNodeLister{Store: informer.GetStore()}
 }
 
-// NewNodeInformer returns a SharedIndexInformer that lists and watches all nodes
 func NewNodeInformer(client kubernetes.Interface, resyncPeriod time.Duration) cache.SharedIndexInformer {
-	sharedIndexInformer := cache.NewSharedIndexInformer(
-		&cache.ListWatch{
-			ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-				return client.Core().Nodes().List(options)
-			},
-			WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				return client.Core().Nodes().Watch(options)
-			},
-		},
-		&v1.Node{},
+	return informers_v1.NewNodeInformer(
+		client,
 		resyncPeriod,
-		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})
-
-	return sharedIndexInformer
+		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
+	)
 }
