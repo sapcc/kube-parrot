@@ -4,11 +4,12 @@ import (
 	"fmt"
 
 	"github.com/golang/glog"
-	"k8s.io/client-go/1.5/pkg/api"
-	"k8s.io/client-go/1.5/pkg/api/errors"
-	"k8s.io/client-go/1.5/pkg/api/v1"
-	"k8s.io/client-go/1.5/pkg/labels"
-	"k8s.io/client-go/1.5/tools/cache"
+	"k8s.io/client-go/tools/cache"
+
+	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 type StoreToServiceLister struct {
@@ -44,7 +45,7 @@ func (s storeServicesNamespacer) Get(name string) (*v1.Service, error) {
 		return nil, err
 	}
 	if !exists {
-		return nil, errors.NewNotFound(api.Resource("service"), name)
+		return nil, errors.NewNotFound(schema.ParseGroupResource("service"), name)
 	}
 	return obj.(*v1.Service), nil
 }
@@ -148,7 +149,7 @@ func (s storePodsNamespacer) Get(name string) (*v1.Pod, error) {
 		return nil, err
 	}
 	if !exists {
-		return nil, errors.NewNotFound(api.Resource("pod"), name)
+		return nil, errors.NewNotFound(schema.ParseGroupResource("pod"), name)
 	}
 	return obj.(*v1.Pod), nil
 }

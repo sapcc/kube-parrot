@@ -17,17 +17,18 @@ package cmd
 
 import (
 	"fmt"
-	api "github.com/osrg/gobgp/api"
-	"github.com/osrg/gobgp/packet/bmp"
-	"github.com/spf13/cobra"
-	"golang.org/x/net/context"
 	"net"
 	"strconv"
+
+	"github.com/spf13/cobra"
+
+	"github.com/osrg/gobgp/config"
+	"github.com/osrg/gobgp/packet/bmp"
 )
 
 func modBmpServer(cmdType string, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: gobgp bmp %s <addr>[:<port>] [{pre|post|both}]", cmdType)
+		return fmt.Errorf("usage: gobgp bmp %s <addr>[:<port>] [{pre|post|both|local-rib|all}]", cmdType)
 	}
 
 	var address string
@@ -40,33 +41,38 @@ func modBmpServer(cmdType string, args []string) error {
 		address = args[0]
 	} else {
 		address = host
-		pn, _ := strconv.Atoi(p)
+		// Note: BmpServerConfig.Port is uint32 type, but the TCP/UDP port is
+		// 16-bit length.
+		pn, _ := strconv.ParseUint(p, 10, 16)
 		port = uint32(pn)
 	}
 
 	var err error
 	switch cmdType {
 	case CMD_ADD:
-		policyType := api.AddBmpRequest_PRE
+		policyType := config.BMP_ROUTE_MONITORING_POLICY_TYPE_PRE_POLICY
 		if len(args) > 1 {
 			switch args[1] {
 			case "pre":
-				policyType = api.AddBmpRequest_PRE
 			case "post":
-				policyType = api.AddBmpRequest_POST
+				policyType = config.BMP_ROUTE_MONITORING_POLICY_TYPE_POST_POLICY
 			case "both":
-				policyType = api.AddBmpRequest_BOTH
+				policyType = config.BMP_ROUTE_MONITORING_POLICY_TYPE_BOTH
+			case "local-rib":
+				policyType = config.BMP_ROUTE_MONITORING_POLICY_TYPE_LOCAL_RIB
+			case "all":
+				policyType = config.BMP_ROUTE_MONITORING_POLICY_TYPE_ALL
 			default:
-				return fmt.Errorf("invalid bmp policy type. valid type is {pre|post|both}")
+				return fmt.Errorf("invalid bmp policy type. valid type is {pre|post|both|local-rib|all}")
 			}
 		}
-		_, err = client.AddBmp(context.Background(), &api.AddBmpRequest{
+		err = client.AddBMP(&config.BmpServerConfig{
 			Address: address,
 			Port:    port,
-			Type:    policyType,
+			RouteMonitoringPolicy: policyType,
 		})
 	case CMD_DEL:
-		_, err = client.DeleteBmp(context.Background(), &api.DeleteBmpRequest{
+		err = client.DeleteBMP(&config.BmpServerConfig{
 			Address: address,
 			Port:    port,
 		})

@@ -4,7 +4,8 @@ import (
 	"time"
 
 	"github.com/sapcc/kube-parrot/pkg/forked/workqueue"
-	"k8s.io/client-go/1.5/pkg/util/wait"
+
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 type Interface interface {

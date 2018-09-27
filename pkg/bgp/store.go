@@ -8,8 +8,8 @@ import (
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/table"
 
-	"k8s.io/client-go/1.5/pkg/api/v1"
-	"k8s.io/client-go/1.5/tools/cache"
+	"k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/cache"
 )
 
 type RoutesStore struct {

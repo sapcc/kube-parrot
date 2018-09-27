@@ -3,16 +3,17 @@
 This page explains how to use GoBGP as a Go Native BGP library.
 
 ## Contents
-- [Basic Example](#basic)
 
-## <a name="basic"> Basic Example
+- [Basic Example](#basic-example)
+
+## Basic Example
 
 ```go
 package main
 
 import (
 	"fmt"
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/config"
 	"github.com/osrg/gobgp/packet/bgp"
@@ -67,7 +68,7 @@ func main() {
 	}
 
 	// monitor new routes
-	w := s.Watch(gobgp.WatchBestPath())
+	w := s.Watch(gobgp.WatchBestPath(false))
 	for {
 		select {
 		case ev := <-w.Event():

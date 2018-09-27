@@ -13,17 +13,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
-from fabric.api import local
-from lib import base
-from lib.gobgp import *
-from lib.exabgp import *
+from __future__ import absolute_import
+
 import sys
-import os
 import time
+import unittest
+
+from fabric.api import local
 import nose
-from noseplugin import OptionParser, parser_option
-from itertools import chain
+
+from lib.noseplugin import OptionParser, parser_option
+
+from lib import base
+from lib.base import (
+    BGP_FSM_IDLE,
+    BGP_FSM_ESTABLISHED,
+    BGP_ATTR_TYPE_COMMUNITIES,
+)
+from lib.gobgp import GoBGPContainer
+from lib.exabgp import ExaBGPContainer
 
 
 def community_exists(path, com):
@@ -53,13 +61,7 @@ class GoBGPTestBase(unittest.TestCase):
         qs = [q1, q2, q3]
         ctns = [g1, q1, q2, q3]
 
-        # advertise a route from q1, q2, q3
-        for idx, q in enumerate(qs):
-            route = '10.0.{0}.0/24'.format(idx+1)
-            q.add_route(route)
-
         initial_wait_time = max(ctn.run() for ctn in ctns)
-
         time.sleep(initial_wait_time)
 
         g1.local('gobgp global policy export add default reject')
@@ -67,6 +69,11 @@ class GoBGPTestBase(unittest.TestCase):
         for q in qs:
             g1.add_peer(q)
             q.add_peer(g1)
+
+        # advertise a route from q1, q2, q3
+        for idx, q in enumerate(qs):
+            route = '10.0.{0}.0/24'.format(idx + 1)
+            q.add_route(route)
 
         cls.gobgp = g1
         cls.quaggas = {'q1': q1, 'q2': q2, 'q3': q3}
@@ -82,10 +89,10 @@ class GoBGPTestBase(unittest.TestCase):
 
     def test_03_add_peer(self):
         q = ExaBGPContainer(name='q4', asn=65004, router_id='192.168.0.5')
-        q.add_route('10.10.0.0/24')
         time.sleep(q.run())
         self.gobgp.add_peer(q)
         q.add_peer(self.gobgp)
+        q.add_route('10.10.0.0/24')
         self.gobgp.wait_for(expected_state=BGP_FSM_ESTABLISHED, peer=q)
         self.quaggas['q4'] = q
         for q in self.quaggas.itervalues():
@@ -184,7 +191,7 @@ class GoBGPTestBase(unittest.TestCase):
     def test_13_check_adj_rib_out(self):
         q1 = self.quaggas['q1']
         for path in self.gobgp.get_adj_rib_out(q1):
-            self.assertTrue(path['local-pref'] == None)
+            self.assertTrue(path['local-pref'] is None)
         q5 = self.quaggas['q5']
         for path in self.gobgp.get_adj_rib_out(q5):
             self.assertTrue(path['local-pref'] == 300)
@@ -248,11 +255,35 @@ class GoBGPTestBase(unittest.TestCase):
         num4 = len(self.gobgp.get_adj_rib_out(q1))
         self.assertTrue(num1 + 1 == num4)
 
+    def test_17_multi_statement(self):
+        self.gobgp.local('gobgp policy statement st3 add action med set 100')
+        self.gobgp.local('gobgp policy statement st4 add action local-pref 100')
+        self.gobgp.local('gobgp policy add p3 st3 st4')
+        self.gobgp.local('gobgp global policy import set p3 default accept')
+
+        self.gobgp.add_route('10.70.0.0/24')
+        time.sleep(1)
+        rib = self.gobgp.get_global_rib('10.70.0.0/24')
+        self.assertTrue(len(rib) == 1)
+        self.assertTrue(len(rib[0]['paths']) == 1)
+        path = rib[0]['paths'][0]
+        self.assertTrue(path['med'] == 100)
+        self.assertTrue(path['local-pref'] == 100)
+
+    def test_18_reject_policy(self):
+        self.gobgp.local('gobgp global policy import set default reject')
+        self.gobgp.local('gobgp neighbor all softresetin')
+
+        time.sleep(1)
+
+        # self-generated routes remain since softresetin doesn't re-evaluate
+        # them
+        for v in self.gobgp.get_global_rib():
+            for p in v['paths']:
+                self.assertTrue(p['nexthop'] == '0.0.0.0')
+
 
 if __name__ == '__main__':
-    if os.geteuid() is not 0:
-        print "you are not root."
-        sys.exit(1)
     output = local("which docker 2>&1 > /dev/null ; echo $?", capture=True)
     if int(output) is not 0:
         print "docker not found"

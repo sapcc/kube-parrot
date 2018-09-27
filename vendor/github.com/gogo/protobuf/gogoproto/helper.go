@@ -39,6 +39,14 @@ func IsNullable(field *google_protobuf.FieldDescriptorProto) bool {
 	return proto.GetBoolExtension(field.Options, E_Nullable, true)
 }
 
+func IsStdTime(field *google_protobuf.FieldDescriptorProto) bool {
+	return proto.GetBoolExtension(field.Options, E_Stdtime, false)
+}
+
+func IsStdDuration(field *google_protobuf.FieldDescriptorProto) bool {
+	return proto.GetBoolExtension(field.Options, E_Stdduration, false)
+}
+
 func NeedsNilCheck(proto3 bool, field *google_protobuf.FieldDescriptorProto) bool {
 	nullable := IsNullable(field)
 	if field.IsMessage() || IsCustomType(field) {
@@ -80,6 +88,14 @@ func IsCastValue(field *google_protobuf.FieldDescriptorProto) bool {
 		return true
 	}
 	return false
+}
+
+func HasEnumDecl(file *google_protobuf.FileDescriptorProto, enum *google_protobuf.EnumDescriptorProto) bool {
+	return proto.GetBoolExtension(enum.Options, E_Enumdecl, proto.GetBoolExtension(file.Options, E_EnumdeclAll, true))
+}
+
+func HasTypeDecl(file *google_protobuf.FileDescriptorProto, message *google_protobuf.DescriptorProto) bool {
+	return proto.GetBoolExtension(message.Options, E_Typedecl, proto.GetBoolExtension(file.Options, E_TypedeclAll, true))
 }
 
 func GetCustomType(field *google_protobuf.FieldDescriptorProto) string {
@@ -334,4 +350,8 @@ func ImportsGoGoProto(file *google_protobuf.FileDescriptorProto) bool {
 
 func HasCompare(file *google_protobuf.FileDescriptorProto, message *google_protobuf.DescriptorProto) bool {
 	return proto.GetBoolExtension(message.Options, E_Compare, proto.GetBoolExtension(file.Options, E_CompareAll, false))
+}
+
+func RegistersGolangProto(file *google_protobuf.FileDescriptorProto) bool {
+	return proto.GetBoolExtension(file.Options, E_GoprotoRegistration, false)
 }

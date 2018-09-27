@@ -8,8 +8,7 @@ import (
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/table"
 	"github.com/sapcc/kube-parrot/pkg/types"
-
-	"k8s.io/client-go/1.5/pkg/api/v1"
+	"k8s.io/api/core/v1"
 )
 
 type RouteInterface interface {

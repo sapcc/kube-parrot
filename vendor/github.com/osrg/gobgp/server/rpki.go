@@ -24,60 +24,34 @@ import (
 	"strconv"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/armon/go-radix"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
+
 	"github.com/osrg/gobgp/config"
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/packet/rtr"
 	"github.com/osrg/gobgp/table"
-	"gopkg.in/tomb.v2"
+)
+
+const (
+	CONNECT_RETRY_INTERVAL = 30
 )
 
 func before(a, b uint32) bool {
 	return int32(a-b) < 0
 }
 
-type ipPrefix struct {
-	Prefix net.IP
-	Length uint8
+type RoaBucket struct {
+	Prefix  *table.IPPrefix
+	entries []*table.ROA
 }
 
-type roaBucket struct {
-	Prefix  *ipPrefix
-	entries []*ROA
+func (r *RoaBucket) GetEntries() []*table.ROA {
+	return r.entries
 }
 
-type ROA struct {
-	Family int
-	Prefix *ipPrefix
-	MaxLen uint8
-	AS     uint32
-	Src    string
-}
-
-func NewROA(family int, prefixByte []byte, prefixLen uint8, maxLen uint8, as uint32, src string) *ROA {
-	p := make([]byte, len(prefixByte))
-	copy(p, prefixByte)
-	return &ROA{
-		Family: family,
-		Prefix: &ipPrefix{
-			Prefix: p,
-			Length: prefixLen,
-		},
-		MaxLen: maxLen,
-		AS:     as,
-		Src:    src,
-	}
-}
-
-func (r *ROA) Equal(roa *ROA) bool {
-	if r.MaxLen == roa.MaxLen && r.Src == roa.Src && r.AS == roa.AS {
-		return true
-	}
-	return false
-}
-
-type roas []*ROA
+type roas []*table.ROA
 
 func (r roas) Len() int {
 	return len(r)
@@ -91,9 +65,9 @@ func (r roas) Less(i, j int) bool {
 	r1 := r[i]
 	r2 := r[j]
 
-	if r1.MaxLen < r1.MaxLen {
+	if r1.MaxLen < r2.MaxLen {
 		return true
-	} else if r1.MaxLen > r1.MaxLen {
+	} else if r1.MaxLen > r2.MaxLen {
 		return false
 	}
 
@@ -138,6 +112,10 @@ func NewROAManager(as uint32) (*roaManager, error) {
 	return m, nil
 }
 
+func (c *roaManager) enabled() bool {
+	return len(c.clientMap) != 0
+}
+
 func (m *roaManager) SetAS(as uint32) error {
 	if m.AS != 0 {
 		return fmt.Errorf("AS was already configured")
@@ -147,9 +125,6 @@ func (m *roaManager) SetAS(as uint32) error {
 }
 
 func (m *roaManager) AddServer(host string, lifetime int64) error {
-	if m.AS == 0 {
-		return fmt.Errorf("AS isn't configured yet")
-	}
 	address, port, err := net.SplitHostPort(host)
 	if err != nil {
 		return err
@@ -160,9 +135,7 @@ func (m *roaManager) AddServer(host string, lifetime int64) error {
 	if _, ok := m.clientMap[host]; ok {
 		return fmt.Errorf("ROA server exists %s", host)
 	}
-	client := NewRoaClient(address, port, m.eventCh, lifetime)
-	m.clientMap[host] = client
-	client.t.Go(client.tryConnect)
+	m.clientMap[host] = NewRoaClient(address, port, m.eventCh, lifetime)
 	return nil
 }
 
@@ -171,7 +144,8 @@ func (m *roaManager) DeleteServer(host string) error {
 	if !ok {
 		return fmt.Errorf("ROA server doesn't exists %s", host)
 	}
-	client.reset()
+	client.stop()
+	m.deleteAllROA(host)
 	delete(m.clientMap, host)
 	return nil
 }
@@ -180,8 +154,8 @@ func (m *roaManager) deleteAllROA(network string) {
 	for _, tree := range m.Roas {
 		deleteKeys := make([]string, 0, tree.Len())
 		tree.Walk(func(s string, v interface{}) bool {
-			b, _ := v.(*roaBucket)
-			newEntries := make([]*ROA, 0, len(b.entries))
+			b, _ := v.(*RoaBucket)
+			newEntries := make([]*table.ROA, 0, len(b.entries))
 			for _, r := range b.entries {
 				if r.Src != network {
 					newEntries = append(newEntries, r)
@@ -216,6 +190,7 @@ func (m *roaManager) Disable(address string) error {
 		add, _, _ := net.SplitHostPort(network)
 		if add == address {
 			client.reset()
+			m.deleteAllROA(add)
 			return nil
 		}
 	}
@@ -223,14 +198,7 @@ func (m *roaManager) Disable(address string) error {
 }
 
 func (m *roaManager) Reset(address string) error {
-	for network, client := range m.clientMap {
-		add, _, _ := net.SplitHostPort(network)
-		if add == address {
-			client.reset()
-			return nil
-		}
-	}
-	return fmt.Errorf("ROA server not found %s", address)
+	return m.Disable(address)
 }
 
 func (m *roaManager) SoftReset(address string) error {
@@ -271,19 +239,17 @@ func (m *roaManager) HandleROAEvent(ev *ROAEvent) {
 		client.state.Downtime = time.Now().Unix()
 		// clear state
 		client.endOfData = false
-		client.pendingROAs = make([]*ROA, 0)
+		client.pendingROAs = make([]*table.ROA, 0)
 		client.state.RpkiMessages = config.RpkiMessages{}
 		client.conn = nil
-		client.t = tomb.Tomb{}
-		client.t.Go(client.tryConnect)
+		go client.tryConnect()
 		client.timer = time.AfterFunc(time.Duration(client.lifetime)*time.Second, client.lifetimeout)
 		client.oldSessionID = client.sessionID
 	case CONNECTED:
 		log.WithFields(log.Fields{"Topic": "rpki"}).Infof("ROA server %s is connected", ev.Src)
 		client.conn = ev.conn
 		client.state.Uptime = time.Now().Unix()
-		client.t = tomb.Tomb{}
-		client.t.Go(client.established)
+		go client.established()
 	case RTR:
 		m.handleRTRMsg(client, &client.state, ev.Data)
 	case LIFETIMEOUT:
@@ -303,7 +269,7 @@ func (m *roaManager) HandleROAEvent(ev *ROAEvent) {
 	}
 }
 
-func (m *roaManager) roa2tree(roa *ROA) (*radix.Tree, string) {
+func (m *roaManager) roa2tree(roa *table.ROA) (*radix.Tree, string) {
 	tree := m.Roas[bgp.RF_IPv4_UC]
 	if roa.Family == bgp.AFI_IP6 {
 		tree = m.Roas[bgp.RF_IPv6_UC]
@@ -311,12 +277,12 @@ func (m *roaManager) roa2tree(roa *ROA) (*radix.Tree, string) {
 	return tree, table.IpToRadixkey(roa.Prefix.Prefix, roa.Prefix.Length)
 }
 
-func (m *roaManager) deleteROA(roa *ROA) {
+func (m *roaManager) deleteROA(roa *table.ROA) {
 	tree, key := m.roa2tree(roa)
 	b, _ := tree.Get(key)
 	if b != nil {
-		bucket := b.(*roaBucket)
-		newEntries := make([]*ROA, 0, len(bucket.entries))
+		bucket := b.(*RoaBucket)
+		newEntries := make([]*table.ROA, 0, len(bucket.entries))
 		for _, r := range bucket.entries {
 			if !r.Equal(roa) {
 				newEntries = append(newEntries, r)
@@ -339,18 +305,22 @@ func (m *roaManager) deleteROA(roa *ROA) {
 	}).Info("Can't withdraw a ROA")
 }
 
-func (m *roaManager) addROA(roa *ROA) {
+func (m *roaManager) DeleteROA(roa *table.ROA) {
+	m.deleteROA(roa)
+}
+
+func (m *roaManager) addROA(roa *table.ROA) {
 	tree, key := m.roa2tree(roa)
 	b, _ := tree.Get(key)
-	var bucket *roaBucket
+	var bucket *RoaBucket
 	if b == nil {
-		bucket = &roaBucket{
+		bucket = &RoaBucket{
 			Prefix:  roa.Prefix,
-			entries: make([]*ROA, 0),
+			entries: make([]*table.ROA, 0),
 		}
 		tree.Insert(key, bucket)
 	} else {
-		bucket = b.(*roaBucket)
+		bucket = b.(*RoaBucket)
 		for _, r := range bucket.entries {
 			if r.Equal(roa) {
 				// we already have the same one
@@ -359,6 +329,10 @@ func (m *roaManager) addROA(roa *ROA) {
 		}
 	}
 	bucket.entries = append(bucket.entries, roa)
+}
+
+func (m *roaManager) AddROA(roa *table.ROA) {
+	m.addROA(roa)
 }
 
 func (c *roaManager) handleRTRMsg(client *roaClient, state *config.RpkiServerState, buf []byte) {
@@ -390,7 +364,7 @@ func (c *roaManager) handleRTRMsg(client *roaClient, state *config.RpkiServerSta
 				family = bgp.AFI_IP6
 				received.Ipv6Prefix++
 			}
-			roa := NewROA(family, msg.Prefix, msg.PrefixLen, msg.MaxLen, msg.AS, client.host)
+			roa := table.NewROA(family, msg.Prefix, msg.PrefixLen, msg.MaxLen, msg.AS, client.host)
 			if (msg.Flags & 1) == 1 {
 				if client.endOfData {
 					c.addROA(roa)
@@ -417,7 +391,7 @@ func (c *roaManager) handleRTRMsg(client *roaClient, state *config.RpkiServerSta
 			for _, roa := range client.pendingROAs {
 				c.addROA(roa)
 			}
-			client.pendingROAs = make([]*ROA, 0)
+			client.pendingROAs = make([]*table.ROA, 0)
 		case *rtr.RTRCacheReset:
 			client.softReset()
 			received.CacheReset++
@@ -439,7 +413,7 @@ func (c *roaManager) GetServers() []*config.RpkiServer {
 		prefixes := make(map[string]uint32)
 
 		tree.Walk(func(s string, v interface{}) bool {
-			b, _ := v.(*roaBucket)
+			b, _ := v.(*RoaBucket)
 			tmpRecords := make(map[string]uint32)
 			for _, roa := range b.entries {
 				tmpRecords[roa.Src]++
@@ -463,15 +437,6 @@ func (c *roaManager) GetServers() []*config.RpkiServer {
 	for _, client := range c.clientMap {
 		state := &client.state
 
-		addr, port, _ := net.SplitHostPort(client.host)
-		l = append(l, &config.RpkiServer{
-			Config: config.RpkiServerConfig{
-				Address: addr,
-				Port:    func() uint32 { p, _ := strconv.Atoi(port); return uint32(p) }(),
-			},
-			State: client.state,
-		})
-
 		if client.conn == nil {
 			state.Up = false
 		} else {
@@ -488,13 +453,24 @@ func (c *roaManager) GetServers() []*config.RpkiServer {
 		state.PrefixesV4 = f(prefixesV4, client.host)
 		state.PrefixesV6 = f(prefixesV6, client.host)
 		state.SerialNumber = client.serialNumber
+
+		addr, port, _ := net.SplitHostPort(client.host)
+		l = append(l, &config.RpkiServer{
+			Config: config.RpkiServerConfig{
+				Address: addr,
+				// Note: RpkiServerConfig.Port is uint32 type, but the TCP/UDP
+				// port is 16-bit length.
+				Port: func() uint32 { p, _ := strconv.ParseUint(port, 10, 16); return uint32(p) }(),
+			},
+			State: client.state,
+		})
 	}
 	return l
 }
 
-func (c *roaManager) GetRoa(family bgp.RouteFamily) ([]*ROA, error) {
+func (c *roaManager) GetRoa(family bgp.RouteFamily) ([]*table.ROA, error) {
 	if len(c.clientMap) == 0 {
-		return []*ROA{}, fmt.Errorf("RPKI server isn't configured.")
+		return []*table.ROA{}, fmt.Errorf("RPKI server isn't configured.")
 	}
 	var rfList []bgp.RouteFamily
 	switch family {
@@ -505,11 +481,11 @@ func (c *roaManager) GetRoa(family bgp.RouteFamily) ([]*ROA, error) {
 	default:
 		rfList = []bgp.RouteFamily{bgp.RF_IPv4_UC, bgp.RF_IPv6_UC}
 	}
-	l := make([]*ROA, 0)
+	l := make([]*table.ROA, 0)
 	for _, rf := range rfList {
 		if tree, ok := c.Roas[rf]; ok {
 			tree.Walk(func(s string, v interface{}) bool {
-				b, _ := v.(*roaBucket)
+				b, _ := v.(*RoaBucket)
 				var roaList roas
 				for _, r := range b.entries {
 					roaList = append(roaList, r)
@@ -525,65 +501,91 @@ func (c *roaManager) GetRoa(family bgp.RouteFamily) ([]*ROA, error) {
 	return l, nil
 }
 
-func validatePath(ownAs uint32, tree *radix.Tree, cidr string, asPath *bgp.PathAttributeAsPath) config.RpkiValidationResultType {
+func ValidatePath(ownAs uint32, tree *radix.Tree, cidr string, asPath *bgp.PathAttributeAsPath) *table.Validation {
 	var as uint32
 
-	if len(asPath.Value) == 0 {
+	validation := &table.Validation{
+		Status:          config.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND,
+		Reason:          table.RPKI_VALIDATION_REASON_TYPE_NONE,
+		Matched:         make([]*table.ROA, 0),
+		UnmatchedLength: make([]*table.ROA, 0),
+		UnmatchedAs:     make([]*table.ROA, 0),
+	}
+
+	if asPath == nil || len(asPath.Value) == 0 {
 		as = ownAs
 	} else {
-		asParam := asPath.Value[len(asPath.Value)-1].(*bgp.As4PathParam)
-		switch asParam.Type {
+		param := asPath.Value[len(asPath.Value)-1]
+		switch param.GetType() {
 		case bgp.BGP_ASPATH_ATTR_TYPE_SEQ:
-			if len(asParam.AS) == 0 {
+			asList := param.GetAS()
+			if len(asList) == 0 {
 				as = ownAs
 			} else {
-				as = asParam.AS[len(asParam.AS)-1]
+				as = asList[len(asList)-1]
 			}
 		case bgp.BGP_ASPATH_ATTR_TYPE_CONFED_SET, bgp.BGP_ASPATH_ATTR_TYPE_CONFED_SEQ:
 			as = ownAs
 		default:
-			return config.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND
+			return validation
 		}
 	}
 	_, n, _ := net.ParseCIDR(cidr)
 	ones, _ := n.Mask.Size()
 	prefixLen := uint8(ones)
-	_, b, _ := tree.LongestPrefix(table.IpToRadixkey(n.IP, prefixLen))
+	key := table.IpToRadixkey(n.IP, prefixLen)
+	_, b, _ := tree.LongestPrefix(key)
 	if b == nil {
-		return config.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND
+		return validation
 	}
 
-	bucket, _ := b.(*roaBucket)
-	for _, r := range bucket.entries {
-		if prefixLen > r.MaxLen {
-			continue
+	var bucket *RoaBucket
+	fn := radix.WalkFn(func(k string, v interface{}) bool {
+		bucket, _ = v.(*RoaBucket)
+		for _, r := range bucket.entries {
+			if prefixLen <= r.MaxLen {
+				if r.AS != 0 && r.AS == as {
+					validation.Matched = append(validation.Matched, r)
+				} else {
+					validation.UnmatchedAs = append(validation.UnmatchedAs, r)
+				}
+			} else {
+				validation.UnmatchedLength = append(validation.UnmatchedLength, r)
+			}
 		}
-		if r.AS == as {
-			return config.RPKI_VALIDATION_RESULT_TYPE_VALID
-		}
+		return false
+	})
+	tree.WalkPath(key, fn)
+
+	if len(validation.Matched) != 0 {
+		validation.Status = config.RPKI_VALIDATION_RESULT_TYPE_VALID
+		validation.Reason = table.RPKI_VALIDATION_REASON_TYPE_NONE
+	} else if len(validation.UnmatchedAs) != 0 {
+		validation.Status = config.RPKI_VALIDATION_RESULT_TYPE_INVALID
+		validation.Reason = table.RPKI_VALIDATION_REASON_TYPE_AS
+	} else if len(validation.UnmatchedLength) != 0 {
+		validation.Status = config.RPKI_VALIDATION_RESULT_TYPE_INVALID
+		validation.Reason = table.RPKI_VALIDATION_REASON_TYPE_LENGTH
+	} else {
+		validation.Status = config.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND
+		validation.Reason = table.RPKI_VALIDATION_REASON_TYPE_NONE
 	}
-	return config.RPKI_VALIDATION_RESULT_TYPE_INVALID
+
+	return validation
 }
 
-func (c *roaManager) validate(pathList []*table.Path) {
-	if len(c.clientMap) == 0 {
-		// RPKI isn't enabled
-		return
+func (c *roaManager) validate(path *table.Path) *table.Validation {
+	if len(c.clientMap) == 0 || path.IsWithdraw || path.IsEOR() {
+		// RPKI isn't enabled or invalid path
+		return nil
 	}
-
-	for _, path := range pathList {
-		if path.IsWithdraw || path.IsEOR() {
-			continue
-		}
-		if tree, ok := c.Roas[path.GetRouteFamily()]; ok {
-			r := validatePath(c.AS, tree, path.GetNlri().String(), path.GetAsPath())
-			path.SetValidation(config.RpkiValidationResultType(r))
-		}
+	if tree, ok := c.Roas[path.GetRouteFamily()]; ok {
+		return ValidatePath(c.AS, tree, path.GetNlri().String(), path.GetAsPath())
 	}
+	return nil
 }
 
 type roaClient struct {
-	t            tomb.Tomb
 	host         string
 	conn         *net.TCPConn
 	state        config.RpkiServerState
@@ -594,16 +596,23 @@ type roaClient struct {
 	timer        *time.Timer
 	lifetime     int64
 	endOfData    bool
-	pendingROAs  []*ROA
+	pendingROAs  []*table.ROA
+	cancelfnc    context.CancelFunc
+	ctx          context.Context
 }
 
 func NewRoaClient(address, port string, ch chan *ROAEvent, lifetime int64) *roaClient {
-	return &roaClient{
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &roaClient{
 		host:        net.JoinHostPort(address, port),
 		eventCh:     ch,
 		lifetime:    lifetime,
-		pendingROAs: make([]*ROA, 0),
+		pendingROAs: make([]*table.ROA, 0),
+		ctx:         ctx,
+		cancelfnc:   cancel,
 	}
+	go c.tryConnect()
+	return c
 }
 
 func (c *roaClient) enable(serial uint32) error {
@@ -629,66 +638,69 @@ func (c *roaClient) softReset() error {
 		}
 		c.state.RpkiMessages.RpkiSent.ResetQuery++
 		c.endOfData = false
-		c.pendingROAs = make([]*ROA, 0)
+		c.pendingROAs = make([]*table.ROA, 0)
 	}
 	return nil
 }
 
 func (c *roaClient) reset() {
-	c.t.Kill(nil)
 	if c.conn != nil {
 		c.conn.Close()
 	}
 }
 
-func (c *roaClient) tryConnect() error {
-	for c.t.Alive() {
-		conn, err := net.Dial("tcp", c.host)
-		if err != nil {
-			time.Sleep(30 * time.Second)
+func (c *roaClient) stop() {
+	c.cancelfnc()
+	c.reset()
+}
+
+func (c *roaClient) tryConnect() {
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+		}
+		if conn, err := net.Dial("tcp", c.host); err != nil {
+			// better to use context with timeout
+			time.Sleep(CONNECT_RETRY_INTERVAL * time.Second)
 		} else {
 			c.eventCh <- &ROAEvent{
 				EventType: CONNECTED,
 				Src:       c.host,
 				conn:      conn.(*net.TCPConn),
 			}
-			return nil
+			return
 		}
 	}
-	return nil
 }
 
-func (c *roaClient) established() error {
-	defer c.conn.Close()
-
-	disconnected := func() {
+func (c *roaClient) established() (err error) {
+	defer func() {
+		c.conn.Close()
 		c.eventCh <- &ROAEvent{
 			EventType: DISCONNECTED,
 			Src:       c.host,
 		}
-	}
+	}()
 
-	err := c.softReset()
-	if err != nil {
-		disconnected()
-		return nil
+	if err := c.softReset(); err != nil {
+		return err
 	}
 
 	for {
 		header := make([]byte, rtr.RTR_MIN_LEN)
-		_, err := io.ReadFull(c.conn, header)
-		if err != nil {
-			break
+		if _, err = io.ReadFull(c.conn, header); err != nil {
+			return err
 		}
 		totalLen := binary.BigEndian.Uint32(header[4:8])
 		if totalLen < rtr.RTR_MIN_LEN {
-			break
+			return fmt.Errorf("too short header length %v", totalLen)
 		}
 
 		body := make([]byte, totalLen-rtr.RTR_MIN_LEN)
-		_, err = io.ReadFull(c.conn, body)
-		if err != nil {
-			break
+		if _, err = io.ReadFull(c.conn, body); err != nil {
+			return
 		}
 
 		c.eventCh <- &ROAEvent{
@@ -696,8 +708,5 @@ func (c *roaClient) established() error {
 			Src:       c.host,
 			Data:      append(header, body...),
 		}
-
 	}
-	disconnected()
-	return nil
 }
