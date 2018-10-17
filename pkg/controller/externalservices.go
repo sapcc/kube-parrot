@@ -211,22 +211,60 @@ func (c *ExternalServicesController) reconcile() error {
 			}
 		}
 
-		if _, ok, _ := c.endpoints.Get(route.Service); !ok {
+		if eps, ok, _ := c.endpoints.Get(route.Service); !ok {
 			if err := c.routes.Delete(route); err != nil {
 				return err
 			}
-		}
-	}
-
-	for _, proxy := range c.proxies.List() {
-		for _, service := range c.services.List() {
-			if _, ok, _ := c.endpoints.Get(service); ok {
-				if err := c.routes.Add(service.(*v1.Service), proxy.(*v1.Pod)); err != nil {
+		} else if hasLocalOnlyAnnotation(route.Service) {
+			if !hasEndpointOnNode(route.Proxy.Spec.NodeName, eps.(*v1.Endpoints)) {
+				if err := c.routes.Delete(route); err != nil {
 					return err
 				}
 			}
 		}
 	}
 
+	for _, proxy := range c.proxies.List() {
+		for _, service := range c.services.List() {
+			if eps, ok, _ := c.endpoints.Get(service); ok {
+				svc := service.(*v1.Service)
+				proxyPod := proxy.(*v1.Pod)
+				if hasLocalOnlyAnnotation(svc) {
+					if hasEndpointOnNode(proxyPod.Spec.NodeName, eps.(*v1.Endpoints)) {
+						if err := c.routes.Add(svc, proxyPod); err != nil {
+							return err
+						}
+					}
+				} else {
+					if err := c.routes.Add(svc, proxyPod); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
 	return nil
+}
+
+func hasLocalOnlyAnnotation(svc *v1.Service) bool {
+	for _, annotation := range []string{"service.alpha.kubernetes.io/external-traffic", "service.beta.kubernetes.io/external-traffic"} {
+		if l, ok := svc.Annotations[annotation]; ok {
+			if l == "LocalOnly" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasEndpointOnNode(nodeName string, eps *v1.Endpoints) bool {
+	for _, subset := range eps.Subsets {
+		for _, address := range subset.Addresses {
+			if *address.NodeName == nodeName {
+				return true
+			}
+		}
+	}
+	return false
 }
