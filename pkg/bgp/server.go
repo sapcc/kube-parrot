@@ -20,13 +20,10 @@ type Server struct {
 	routerId     string
 	localAddress string
 
-	ExternalIPRoutes        *ExternalIPRoutesStore
-	NodePodSubnetRoutes     *NodePodSubnetRoutesStore
-	NodeServiceSubnetRoutes *NodeServiceSubnetRoutesStore
-	APIServerRoutes         *APIServerRoutesStore
+	ExternalIPRoutes *ExternalIPRoutesStore
 }
 
-func NewServer(localAddress net.IP, as int, port int, masterIP net.IP) *Server {
+func NewServer(localAddress net.IP, as int, port int) *Server {
 	server := &Server{
 		localAddress: localAddress.String(),
 		routerId:     localAddress.String(),
@@ -34,9 +31,6 @@ func NewServer(localAddress net.IP, as int, port int, masterIP net.IP) *Server {
 	}
 
 	server.ExternalIPRoutes = newExternalIPRoutesStore(server)
-	server.NodePodSubnetRoutes = newNodePodSubnetRoutesStore(server)
-	server.NodeServiceSubnetRoutes = newNodeServiceSubnetRoutesStore(server)
-	server.APIServerRoutes = newAPIServerRoutesStore(server, masterIP)
 
 	server.bgp = gobgp.NewBgpServer()
 	server.grpc = api.NewGrpcServer(

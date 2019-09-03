@@ -21,13 +21,11 @@ var (
 )
 
 type Options struct {
-	GrpcPort      int
-	As            int
-	LocalAddress  net.IP
-	MasterAddress net.IP
-	Neighbors     []*net.IP
-	ServiceSubnet net.IPNet
-	Kubeconfig    string
+	GrpcPort     int
+	As           int
+	LocalAddress net.IP
+	Neighbors    []*net.IP
+	Kubeconfig   string
 }
 
 type Parrot struct {
@@ -36,26 +34,19 @@ type Parrot struct {
 	client *kubernetes.Clientset
 	bgp    *bgp.Server
 
-	informers informer.SharedInformerFactory
-
-	podSubnets      *controller.PodSubnetsController
-	serviceSubnets  *controller.ServiceSubnetController
+	informers       informer.SharedInformerFactory
 	externalSevices *controller.ExternalServicesController
-	apiservers      *controller.APIServerController
 }
 
 func New(opts Options) *Parrot {
 	p := &Parrot{
 		Options: opts,
-		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort, opts.MasterAddress),
+		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort),
 		client:  NewClient(opts.Kubeconfig),
 	}
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
-	p.podSubnets = controller.NewPodSubnetsController(p.informers, p.bgp.NodePodSubnetRoutes)
-	p.serviceSubnets = controller.NewServiceSubnetController(p.informers, opts.ServiceSubnet, opts.LocalAddress, p.bgp.NodeServiceSubnetRoutes)
 	p.externalSevices = controller.NewExternalServicesController(p.informers, opts.LocalAddress, p.bgp.ExternalIPRoutes)
-	p.apiservers = controller.NewAPIServerController(p.informers, opts.LocalAddress, p.bgp.APIServerRoutes)
 
 	p.informers.Pods().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    p.debugAdd,
@@ -94,15 +85,11 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	cache.WaitForCacheSync(
 		stopCh,
 		p.informers.Endpoints().Informer().HasSynced,
-		p.informers.Nodes().Informer().HasSynced,
 		p.informers.Pods().Informer().HasSynced,
 		p.informers.Services().Informer().HasSynced,
 	)
 
-	go p.podSubnets.Run(stopCh, wg)
-	go p.serviceSubnets.Run(stopCh, wg)
 	go p.externalSevices.Run(stopCh, wg)
-	go p.apiservers.Run(stopCh, wg)
 }
 
 func (p *Parrot) debugAdd(obj interface{}) {
