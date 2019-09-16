@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net"
 	"sync"
 
@@ -26,8 +25,6 @@ func init() {
 	flag.StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to kubeconfig file with authorization and master location information.")
 	flag.IntVar(&opts.As, "as", 65000, "global AS")
 	flag.IPVar(&opts.LocalAddress, "local_address", net.ParseIP("127.0.0.1"), "local IP address")
-
-	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
 }
 
 func main() {
@@ -39,7 +36,7 @@ func main() {
 	stop := make(chan struct{})
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 
-	opts.Neighbors = neighbors
+	opts.Neighbors = getNeighbors(opts.LocalAddress)
 	opts.GrpcPort = 12345
 	parrot := parrot.New(opts)
 
@@ -53,20 +50,12 @@ func main() {
 	glog.V(2).Infof("Shutdown Completed. Bye!")
 }
 
-func (f *Neighbors) String() string {
-	return fmt.Sprintf("%v", *f)
-}
+func getNeighbors(local net.IP) []*net.IP {
+	n1 := local.To4()
+	n2 := local.To4()
 
-func (i *Neighbors) Set(value string) error {
-	ip := net.ParseIP(value)
-	if ip == nil {
-		return fmt.Errorf("%v is not a valid IP address", value)
-	}
+	n1[3] = n1[3] - 1
+	n2[3] = n2[3] - 2
 
-	*i = append(*i, &ip)
-	return nil
-}
-
-func (s *Neighbors) Type() string {
-	return "neighborSlice"
+	return []*net.IP{&n1, &n2}
 }
