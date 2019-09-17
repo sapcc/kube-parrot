@@ -11,8 +11,8 @@ import (
 )
 
 type RouteInterface interface {
-	Source() (net.IP, uint8)
-	NextHop() net.IP
+	Source() (*net.IP, uint8)
+	NextHop() *net.IP
 	Describe() string
 	Path(bool) *table.Path
 }
@@ -42,21 +42,22 @@ func (r Route) Path(isWithdraw bool) *table.Path {
 type ExternalIPRoute struct {
 	Route
 	Service *v1.Service
-	Proxy   *v1.Pod
+	HostIP  *net.IP
 }
 
-func (r ExternalIPRoute) Source() (net.IP, uint8) {
-	return net.ParseIP(r.Service.Spec.ExternalIPs[0]), uint8(32)
+func (r ExternalIPRoute) Source() (*net.IP, uint8) {
+	ip := net.ParseIP(r.Service.Spec.ExternalIPs[0])
+	return &ip, uint8(32)
 }
 
-func (r ExternalIPRoute) NextHop() net.IP {
-	return net.ParseIP(r.Proxy.Status.HostIP)
+func (r ExternalIPRoute) NextHop() *net.IP {
+	return r.HostIP
 }
 
 func (r ExternalIPRoute) Describe() string {
-	return fmt.Sprintf("ExternalIP:    %s/%s -> %s/%s", r.Service.Namespace, r.Service.Name, r.Proxy.Namespace, r.Proxy.Name)
+	return fmt.Sprintf("ExternalIP:    %s/%s -> %s", r.Service.Namespace, r.Service.Name, r.HostIP)
 }
 
-func NewExternalIPRoute(service *v1.Service, proxy *v1.Pod) RouteInterface {
-	return ExternalIPRoute{Route{}, service, proxy}
+func NewExternalIPRoute(service *v1.Service, hostIP *net.IP) RouteInterface {
+	return ExternalIPRoute{Route{}, service, hostIP}
 }

@@ -23,7 +23,7 @@ type Server struct {
 	ExternalIPRoutes *ExternalIPRoutesStore
 }
 
-func NewServer(localAddress net.IP, as int, port int) *Server {
+func NewServer(localAddress *net.IP, as int, port int) *Server {
 	server := &Server{
 		localAddress: localAddress.String(),
 		routerId:     localAddress.String(),

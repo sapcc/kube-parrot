@@ -3,12 +3,9 @@ package parrot
 import (
 	"fmt"
 	"net"
-	"reflect"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
@@ -21,11 +18,11 @@ var (
 )
 
 type Options struct {
-	GrpcPort     int
-	As           int
-	LocalAddress net.IP
-	Neighbors    []*net.IP
-	Kubeconfig   string
+	GrpcPort  int
+	As        int
+	NodeName  string
+	HostIP    net.IP
+	Neighbors []*net.IP
 }
 
 type Parrot struct {
@@ -41,30 +38,12 @@ type Parrot struct {
 func New(opts Options) *Parrot {
 	p := &Parrot{
 		Options: opts,
-		bgp:     bgp.NewServer(opts.LocalAddress, opts.As, opts.GrpcPort),
-		client:  NewClient(opts.Kubeconfig),
+		bgp:     bgp.NewServer(&opts.HostIP, opts.As, opts.GrpcPort),
+		client:  NewClient(),
 	}
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
-	p.externalSevices = controller.NewExternalServicesController(p.informers, opts.LocalAddress, p.bgp.ExternalIPRoutes)
-
-	p.informers.Pods().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    p.debugAdd,
-		UpdateFunc: p.debugUpdate,
-		DeleteFunc: p.debugDelete,
-	})
-
-	p.informers.Services().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    p.debugAdd,
-		UpdateFunc: p.debugUpdate,
-		DeleteFunc: p.debugDelete,
-	})
-
-	p.informers.Endpoints().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    p.debugAdd,
-		UpdateFunc: p.debugUpdate,
-		DeleteFunc: p.debugDelete,
-	})
+	p.externalSevices = controller.NewExternalServicesController(p.informers, &opts.HostIP, opts.NodeName, p.bgp.ExternalIPRoutes)
 
 	return p
 }
@@ -90,24 +69,4 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	)
 
 	go p.externalSevices.Run(stopCh, wg)
-}
-
-func (p *Parrot) debugAdd(obj interface{}) {
-	key, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-	glog.V(5).Infof("ADD %s (%s)", reflect.TypeOf(obj), key)
-}
-
-func (p *Parrot) debugDelete(obj interface{}) {
-	key, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
-	glog.V(5).Infof("DELETE %s (%s)", reflect.TypeOf(obj), key)
-}
-
-func (p *Parrot) debugUpdate(cur, old interface{}) {
-	key, _ := cache.DeletionHandlingMetaNamespaceKeyFunc(cur)
-
-	if strings.HasSuffix(key, "kube-scheduler") || strings.HasSuffix(key, "kube-controller-manager") {
-		return
-	}
-
-	glog.V(5).Infof("UPDATE %s (%s)", reflect.TypeOf(cur), key)
 }

@@ -2,6 +2,7 @@ package bgp
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/golang/glog"
 	"github.com/osrg/gobgp/packet/bgp"
@@ -65,8 +66,8 @@ func (s *ExternalIPRoutesStore) List() (routes []ExternalIPRoute) {
 	return routes
 }
 
-func (s *ExternalIPRoutesStore) Add(service *v1.Service, proxy *v1.Pod) error {
-	return s.store.Add(NewExternalIPRoute(service, proxy))
+func (s *ExternalIPRoutesStore) Add(service *v1.Service, hostIP *net.IP) error {
+	return s.store.Add(NewExternalIPRoute(service, hostIP))
 }
 
 func (s *ExternalIPRoutesStore) Delete(route ExternalIPRoute) error {
