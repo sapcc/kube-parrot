@@ -33,6 +33,7 @@ type Parrot struct {
 
 	informers       informer.SharedInformerFactory
 	externalSevices *controller.ExternalServicesController
+	podSubnets      *controller.PodSubnetsController
 }
 
 func New(opts Options) *Parrot {
@@ -44,6 +45,7 @@ func New(opts Options) *Parrot {
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
 	p.externalSevices = controller.NewExternalServicesController(p.informers, &opts.HostIP, opts.NodeName, p.bgp.ExternalIPRoutes)
+	p.podSubnets = controller.NewPodSubnetsController(p.informers, p.bgp.NodePodSubnetRoutes)
 
 	return p
 }
@@ -64,9 +66,10 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	cache.WaitForCacheSync(
 		stopCh,
 		p.informers.Endpoints().Informer().HasSynced,
-		p.informers.Pods().Informer().HasSynced,
+		p.informers.Nodes().Informer().HasSynced,
 		p.informers.Services().Informer().HasSynced,
 	)
 
 	go p.externalSevices.Run(stopCh, wg)
+	go p.podSubnets.Run(stopCh, wg)
 }

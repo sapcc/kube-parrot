@@ -21,6 +21,10 @@ type ExternalIPRoutesStore struct {
 	store RoutesStore
 }
 
+type NodePodSubnetRoutesStore struct {
+	store RoutesStore
+}
+
 func RouteKeyFunc(obj interface{}) (string, error) {
 	route := obj.(RouteInterface)
 	prefix, length := route.Source()
@@ -29,6 +33,10 @@ func RouteKeyFunc(obj interface{}) (string, error) {
 
 func newExternalIPRoutesStore(bgp *Server) *ExternalIPRoutesStore {
 	return &ExternalIPRoutesStore{RoutesStore{cache.NewStore(RouteKeyFunc), bgp}}
+}
+
+func newNodePodSubnetRoutesStore(bgp *Server) *NodePodSubnetRoutesStore {
+	return &NodePodSubnetRoutesStore{RoutesStore{cache.NewStore(RouteKeyFunc), bgp}}
 }
 
 func (s *RoutesStore) Add(route RouteInterface) error {
@@ -71,5 +79,20 @@ func (s *ExternalIPRoutesStore) Add(service *v1.Service, hostIP *net.IP) error {
 }
 
 func (s *ExternalIPRoutesStore) Delete(route ExternalIPRoute) error {
+	return s.store.Delete(route)
+}
+
+func (s *NodePodSubnetRoutesStore) List() (routes []NodePodSubnetRoute) {
+	for _, m := range s.store.List() {
+		routes = append(routes, m.(NodePodSubnetRoute))
+	}
+	return routes
+}
+
+func (s *NodePodSubnetRoutesStore) Add(node *v1.Node) error {
+	return s.store.Add(NewNodePodSubnetRoute(node))
+}
+
+func (s *NodePodSubnetRoutesStore) Delete(route NodePodSubnetRoute) error {
 	return s.store.Delete(route)
 }
