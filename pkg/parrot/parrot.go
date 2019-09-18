@@ -45,7 +45,7 @@ func New(opts Options) *Parrot {
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
 	p.externalSevices = controller.NewExternalServicesController(p.informers, &opts.HostIP, opts.NodeName, p.bgp.ExternalIPRoutes)
-	p.podSubnets = controller.NewPodSubnetsController(p.informers, p.bgp.NodePodSubnetRoutes)
+	p.podSubnets = controller.NewPodSubnetsController(p.informers, &opts.HostIP, p.bgp.NodePodSubnetRoutes)
 
 	return p
 }

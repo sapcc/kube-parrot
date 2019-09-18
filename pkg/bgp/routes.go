@@ -5,14 +5,14 @@ import (
 	"net"
 	"time"
 
+	"github.com/sapcc/kube-parrot/pkg/util"
+
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/table"
 	v1 "k8s.io/api/core/v1"
 )
 
-const (
-	AnnotationNodePodSubnet = "parrot.sap.cc/podsubnet"
-)
+
 
 type RouteInterface interface {
 	Source() (*net.IP, uint8)
@@ -76,14 +76,14 @@ func NewNodePodSubnetRoute(node *v1.Node) RouteInterface {
 }
 
 func (r NodePodSubnetRoute) Source() (*net.IP, uint8) {
-	subnet, _ := GetNodePodSubnet(r.Node)
+	subnet, _ := util.GetNodePodSubnet(r.Node)
 	ip, ipnet, _ := net.ParseCIDR(subnet)
 	prefixSize, _ := ipnet.Mask.Size()
 	return &ip, uint8(prefixSize)
 }
 
 func (r NodePodSubnetRoute) NextHop() *net.IP {
-	nexthop, _ := GetNodeInternalIP(r.Node)
+	nexthop, _ := util.GetNodeInternalIP(r.Node)
 	ip := net.ParseIP(nexthop)
 	return &ip
 }
@@ -91,22 +91,4 @@ func (r NodePodSubnetRoute) NextHop() *net.IP {
 func (r NodePodSubnetRoute) Describe() string {
 	prefix, length := r.Source()
 	return fmt.Sprintf("NodePodSubnet: %s/%v -> %s", prefix.To4().String(), length, r.Node.Name)
-}
-
-func GetNodeInternalIP(node *v1.Node) (string, error) {
-	for _, address := range node.Status.Addresses {
-		if address.Type == v1.NodeInternalIP {
-			return address.Address, nil
-		}
-	}
-
-	return "", fmt.Errorf("Node must have an InternalIP: %s", node.Name)
-}
-
-func GetNodePodSubnet(node *v1.Node) (string, error) {
-	if l, ok := node.Annotations[AnnotationNodePodSubnet]; ok {
-		return l, nil
-	}
-
-	return "", fmt.Errorf("Node must be annotated with %s", AnnotationNodePodSubnet)
 }

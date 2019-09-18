@@ -160,7 +160,7 @@ func (c *ExternalServicesController) reconcile() error {
 			if err := c.routes.Delete(route); err != nil {
 				return err
 			}
-		} else if hasLocalOnlyAnnotation(route.Service) {
+		} else if route.Service.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal {
 			if !hasEndpointOnNode(c.nodeName, eps.(*v1.Endpoints)) {
 				if err := c.routes.Delete(route); err != nil {
 					return err
