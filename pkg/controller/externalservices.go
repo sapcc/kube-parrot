@@ -173,7 +173,7 @@ func (c *ExternalServicesController) reconcile() error {
 		if eps, ok, _ := c.endpoints.Get(service); ok {
 			svc := service.(*v1.Service)
 
-			if hasLocalOnlyAnnotation(svc) {
+			if svc.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal {
 				if hasEndpointOnNode(c.nodeName, eps.(*v1.Endpoints)) {
 					if err := c.routes.Add(svc, c.hostIP); err != nil {
 						return err
@@ -188,17 +188,6 @@ func (c *ExternalServicesController) reconcile() error {
 	}
 
 	return nil
-}
-
-func hasLocalOnlyAnnotation(svc *v1.Service) bool {
-	for _, annotation := range []string{"service.alpha.kubernetes.io/external-traffic", "service.beta.kubernetes.io/external-traffic"} {
-		if l, ok := svc.Annotations[annotation]; ok {
-			if l == "LocalOnly" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func hasEndpointOnNode(nodeName string, eps *v1.Endpoints) bool {
