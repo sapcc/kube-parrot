@@ -89,8 +89,8 @@ func (s *NodePodSubnetRoutesStore) List() (routes []NodePodSubnetRoute) {
 	return routes
 }
 
-func (s *NodePodSubnetRoutesStore) Add(node *v1.Node) error {
-	return s.store.Add(NewNodePodSubnetRoute(node))
+func (s *NodePodSubnetRoutesStore) Add(node *v1.Node, subnet string) error {
+	return s.store.Add(NewNodePodSubnetRoute(node, subnet))
 }
 
 func (s *NodePodSubnetRoutesStore) Delete(route NodePodSubnetRoute) error {

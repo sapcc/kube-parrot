@@ -18,6 +18,7 @@ type ExternalServicesController struct {
 	routes     *bgp.ExternalIPRoutesStore
 	reconciler reconciler.DirtyReconcilerInterface
 	hostIP     *net.IP
+	podCIDR	   *net.IP
 	nodeName   string
 
 	services  cache.Store

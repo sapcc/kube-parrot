@@ -69,15 +69,15 @@ func NewExternalIPRoute(service *v1.Service, hostIP *net.IP) RouteInterface {
 type NodePodSubnetRoute struct {
 	Route
 	Node *v1.Node
+	Subnet string
 }
 
-func NewNodePodSubnetRoute(node *v1.Node) RouteInterface {
-	return NodePodSubnetRoute{Route{}, node}
+func NewNodePodSubnetRoute(node *v1.Node, subnet string) RouteInterface {
+	return NodePodSubnetRoute{Route{}, node, subnet}
 }
 
 func (r NodePodSubnetRoute) Source() (*net.IP, uint8) {
-	subnet, _ := util.GetNodePodSubnet(r.Node)
-	ip, ipnet, _ := net.ParseCIDR(subnet)
+	ip, ipnet, _ := net.ParseCIDR(r.Subnet)
 	prefixSize, _ := ipnet.Mask.Size()
 	return &ip, uint8(prefixSize)
 }

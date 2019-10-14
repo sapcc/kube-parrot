@@ -1,20 +1,17 @@
 package bgp
 
 import (
-	"fmt"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/golang/glog"
-	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/config"
 	gobgp "github.com/osrg/gobgp/server"
 )
 
 type Server struct {
-	bgp  *gobgp.BgpServer
-	grpc *api.Server
+	bgp *gobgp.BgpServer
 
 	as           uint32
 	routerId     string
@@ -35,11 +32,6 @@ func NewServer(localAddress *net.IP, as int, port int) *Server {
 	server.NodePodSubnetRoutes = newNodePodSubnetRoutesStore(server)
 
 	server.bgp = gobgp.NewBgpServer()
-	server.grpc = api.NewGrpcServer(
-		server.bgp,
-		fmt.Sprintf(":%v", port),
-	)
-
 	return server
 }
 
@@ -50,7 +42,6 @@ func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	// logrus.SetLevel(logrus.DebugLevel)
 
 	go s.bgp.Serve()
-	go s.grpc.Serve()
 
 	time.Sleep(1 * time.Second)
 	s.startServer()

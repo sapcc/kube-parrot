@@ -1,38 +1,39 @@
 package main
 
 import (
+	utiljson "encoding/json"
+	"fmt"
 	"net"
-	"sync"
-
-	goflag "flag"
-
-	"github.com/golang/glog"
-	flag "github.com/spf13/pflag"
-
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+
+	"github.com/golang/glog"
 
 	"github.com/sapcc/kube-parrot/pkg/parrot"
 )
 
 var opts parrot.Options
 
-func init() {
-	flag.IntVar(&opts.As, "as", 65000, "global AS")
-	flag.StringVar(&opts.NodeName, "nodename", "", "Name of the node this pod is running on")
-	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
-}
-
 func main() {
-	goflag.CommandLine.Parse([]string{})
-	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
-	flag.Parse()
+	if err := config.mergeConfig(); err != nil {
+		glog.Fatalf("Couldn't read config file: %s", err)
+	}
+
+	config.mergeFlags()
+	json, _ := utiljson.Marshal(config)
+	fmt.Println("using config: %s", string(json))
+
+	if err := config.validate(); err != nil {
+		glog.Fatalf("Couldn't validate config: %s", err)
+	}
 
 	sigs := make(chan os.Signal, 1)
 	stop := make(chan struct{})
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
+	opts.PodCIDR = config.PodCIDR
 	opts.Neighbors = getNeighbors(opts.HostIP.To4())
 	opts.GrpcPort = 12345
 	parrot := parrot.New(opts)

@@ -19,15 +19,17 @@ type PodSubnetsController struct {
 	nodes      cache.Store
 	reconciler reconciler.DirtyReconcilerInterface
 	hostIP     *net.IP
+	podCIDR	   string
 }
 
-func NewPodSubnetsController(informers informer.SharedInformerFactory, hostIP *net.IP,
+func NewPodSubnetsController(informers informer.SharedInformerFactory, hostIP *net.IP, podCIDR string,
 	routes *bgp.NodePodSubnetRoutesStore) *PodSubnetsController {
 
 	n := &PodSubnetsController{
 		nodes:  cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc),
 		routes: routes,
 		hostIP: hostIP,
+		podCIDR: podCIDR,
 	}
 
 	n.reconciler = reconciler.NewNamedDirtyReconciler("podsubnets", n.reconcile)
@@ -64,7 +66,7 @@ func (c *PodSubnetsController) nodeAdd(obj interface{}) {
 		return
 	}
 
-	if _, ok := node.Annotations[util.AnnotationNodePodSubnet]; !ok {
+	if c.podCIDR == "" {
 		if _, exists, _ := c.nodes.Get(node); exists {
 			glog.V(3).Infof("Deleting Node (%s)", node.Name)
 			c.nodes.Delete(node)
@@ -102,7 +104,7 @@ func (c *PodSubnetsController) reconcile() error {
 	}
 
 	for _, node := range c.nodes.List() {
-		if err := c.routes.Add(node.(*v1.Node)); err != nil {
+		if err := c.routes.Add(node.(*v1.Node), c.podCIDR); err != nil {
 			return err
 		}
 	}
