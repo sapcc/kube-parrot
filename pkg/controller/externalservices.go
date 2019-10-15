@@ -71,22 +71,6 @@ func (c *ExternalServicesController) serviceDelete(obj interface{}) {
 
 func (c *ExternalServicesController) serviceAdd(obj interface{}) {
 	service := obj.(*v1.Service)
-	//if l, ok := service.Annotations[types.AnnotationBGPAnnouncement]; ok {
-	//  announcementRequested, err := strconv.ParseBool(l)
-	//  if err != nil {
-	//    glog.Errorf("Failed to parse annotation %v: %v", types.AnnotationBGPAnnouncement, err)
-	//    return
-	//  }
-
-	//  if !announcementRequested {
-	//    glog.V(3).Infof("Skipping service %v. Annotation is set but not true. Huh?", service.GetName())
-	//    return
-	//  }
-	//} else {
-	//  glog.V(5).Infof("Skipping service %v. No announce annotation defined...", service.GetName())
-	//  return
-	//}
-
 	if len(service.Spec.ExternalIPs) == 0 {
 		glog.V(3).Infof("Skipping service %v. No externalIP defined...", service.GetName())
 		return
@@ -146,6 +130,7 @@ func (c *ExternalServicesController) endpointsAdd(obj interface{}) {
 
 func (c *ExternalServicesController) endpointsUpdate(old, cur interface{}) {
 	c.endpointsAdd(cur)
+	c.reconciler.Dirty()
 }
 
 func (c *ExternalServicesController) reconcile() error {
