@@ -9,8 +9,8 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/sapcc/kube-parrot/pkg/bgp"
-	"github.com/sapcc/kube-parrot/pkg/util"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
+	"github.com/sapcc/kube-parrot/pkg/util"
 	reconciler "github.com/sapcc/kube-parrot/pkg/util"
 )
 
@@ -54,17 +54,17 @@ func (c *PodSubnetsController) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 
 func (c *PodSubnetsController) nodeAdd(obj interface{}) {
 	node := obj.(*v1.Node)
-	
+
 	ip, err := util.GetNodeInternalIP(node)
 	if err != nil {
-		glog.Errorf("Node (%s) doesn't have an internal ip. Skipping.", node.Name)	
+		glog.Errorf("Node (%s) doesn't have an internal ip. Skipping.", node.Name)
 	}
-	
+
 	if ip != c.hostIP.String() {
 		return
 	}
 
-	if _, ok := node.Annotations[util.AnnotationNodePodSubnet]; !ok {
+	if _, err := util.GetNodePodSubnet(node); err != nil {
 		if _, exists, _ := c.nodes.Get(node); exists {
 			glog.V(3).Infof("Deleting Node (%s)", node.Name)
 			c.nodes.Delete(node)
