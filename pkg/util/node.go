@@ -14,10 +14,14 @@ import (
 
 const (
 	AnnotationNodePodSubnet = "parrot.sap.cc/podsubnet"
-	ConfigPath              = "/etc/kube-parrot/config"
+	ConfigPath              = "/etc/kubernetes/kube-parrot/config"
 )
 
 var config *Config
+
+type Config struct {
+	PodCIDR string `json:"podCIDR"`
+}
 
 func GetNodeInternalIP(node *v1.Node) (string, error) {
 	for _, address := range node.Status.Addresses {
@@ -30,54 +34,46 @@ func GetNodeInternalIP(node *v1.Node) (string, error) {
 }
 
 func GetNodePodSubnet(node *v1.Node) (string, error) {
-	if c, err := getNodePodSubnetFromConfig(); err == nil {
-		return c, err
+	if config == nil {
+		c, err := loadConfig()
+		if err != nil {
+			glog.Errorf("Couldn't read config file: %s", err)
+		}
+		config = c
+	}
+
+	if config.PodCIDR != "" {
+		return config.PodCIDR, nil
 	}
 
 	if l, ok := node.Annotations[AnnotationNodePodSubnet]; ok {
 		return l, nil
 	}
 
-	return "", fmt.Errorf("Node must be annotated with %s", AnnotationNodePodSubnet)
+	return "", fmt.Errorf("Couldn't figure out nodes PodCIDR. Set annotation or configfile.")
 }
 
-func getNodePodSubnetFromConfig() (string, error) {
-	if config != nil {
-		return config.PodCIDR, nil
-	}
-
+func loadConfig() (*Config, error) {
 	c := &Config{}
-	if err := c.load(); err != nil {
-		return "", err
-	}
-	config = c
 
-	return c.PodCIDR, nil
-}
-
-type Config struct {
-	PodCIDR string `json:"podCIDR"`
-}
-
-func (c *Config) load() error {
 	if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
-		return fmt.Errorf("no config file found at %q", ConfigPath)
+		return c, fmt.Errorf("no config file found at %q", ConfigPath)
 	}
 	glog.V(2).Infof("config file found at %q", ConfigPath)
 
 	yaml, err := ioutil.ReadFile(ConfigPath)
 	if err != nil {
-		return fmt.Errorf("couldn't read config file %q: %s", ConfigPath, err)
+		return c, fmt.Errorf("couldn't read config file %q: %s", ConfigPath, err)
 	}
 
 	json, err := utilyaml.ToJSON(yaml)
 	if err != nil {
-		return fmt.Errorf("couldn't parse config file %q: %s", ConfigPath, err)
+		return c, fmt.Errorf("couldn't parse config file %q: %s", ConfigPath, err)
 	}
 
 	if err = utiljson.Unmarshal(json, c); err != nil {
-		return fmt.Errorf("couldn't unmarshal config file %q: %s", ConfigPath, err)
+		return c, fmt.Errorf("couldn't unmarshal config file %q: %s", ConfigPath, err)
 	}
 
-	return nil
+	return c, nil
 }
