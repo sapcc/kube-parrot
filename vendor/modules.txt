@@ -91,6 +91,7 @@ github.com/pkg/errors
 github.com/pkg/sftp
 # github.com/prometheus/client_golang v0.0.0-20180917102122-e637cec7d9c8
 github.com/prometheus/client_golang/prometheus
+github.com/prometheus/client_golang/prometheus/promhttp
 github.com/prometheus/client_golang/prometheus/internal
 # github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 github.com/prometheus/client_model/go

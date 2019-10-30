@@ -1,19 +1,17 @@
 package main
 
 import (
-	"net"
-	"sync"
-
 	goflag "flag"
-
-	"github.com/golang/glog"
-	flag "github.com/spf13/pflag"
-
+	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
+	"github.com/golang/glog"
+	"github.com/sapcc/kube-parrot/pkg/metrics"
 	"github.com/sapcc/kube-parrot/pkg/parrot"
+	flag "github.com/spf13/pflag"
 )
 
 var opts parrot.Options
@@ -22,6 +20,7 @@ func init() {
 	flag.IntVar(&opts.As, "as", 65000, "global AS")
 	flag.StringVar(&opts.NodeName, "nodename", "", "Name of the node this pod is running on")
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
+	flag.IntVar(&opts.MetricsPort, "metrics-port", 30039, "Port for Prometheus metrics")
 }
 
 func main() {
@@ -39,6 +38,8 @@ func main() {
 
 	wg := &sync.WaitGroup{}
 	parrot.Run(stop, wg)
+
+	go metrics.ServeMetrics(opts.HostIP, opts.MetricsPort, wg, stop)
 
 	<-sigs      // Wait for signals
 	close(stop) // Stop all goroutines

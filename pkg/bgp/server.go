@@ -1,6 +1,7 @@
 package bgp
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/config"
 	gobgp "github.com/osrg/gobgp/server"
+	"github.com/sapcc/kube-parrot/pkg/metrics"
 )
 
 type Server struct {
@@ -85,5 +87,25 @@ func (s *Server) AddNeighbor(neighbor string) {
 
 	if err := s.bgp.AddNeighbor(n); err != nil {
 		glog.Errorf("Oops. Something went wrong adding neighbor: %s", err)
+		metrics.BgpAddNeighbourFailure.WithLabelValues(s.localAddress).Inc()
 	}
+	metrics.BgpAddNeighbourSuccess.WithLabelValues(s.localAddress).Inc()
+}
+
+func (s *Server) GetNeighborBgpState(address string) (string, error) {
+	resp, err := s.grpc.GetNeighbor(context.Background(), &api.GetNeighborRequest{
+		Address: address,
+		EnableAdvertised: true,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	for _, p := range resp.GetPeers() {
+		if p.GetInfo().NeighborAddress == address {
+			return string(p.GetInfo().GetBgpState()), nil
+		}
+	}
+
+	return "", fmt.Errorf("no neighbor with address %s found", address)
 }

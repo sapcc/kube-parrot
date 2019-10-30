@@ -23,6 +23,7 @@ type Options struct {
 	NodeName  string
 	HostIP    net.IP
 	Neighbors []*net.IP
+	MetricsPort int
 }
 
 type Parrot struct {
@@ -42,6 +43,9 @@ func New(opts Options) *Parrot {
 		bgp:     bgp.NewServer(&opts.HostIP, opts.As, opts.GrpcPort),
 		client:  NewClient(),
 	}
+
+	// Register parrot prometheus metrics collector.
+	RegisterCollector(p.NodeName, opts.Neighbors, p.bgp)
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
 	p.externalSevices = controller.NewExternalServicesController(p.informers, &opts.HostIP, opts.NodeName, p.bgp.ExternalIPRoutes)
