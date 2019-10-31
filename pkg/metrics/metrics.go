@@ -14,20 +14,20 @@ import (
 const namespace = "kube_parrot"
 
 var (
-	BgpAddNeighbourSuccess = prometheus.NewCounterVec(
+	BgpAddNeighborSuccess = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: namespace,
-			Name:      "add_bgp_neighbours_success",
-			Help:      "Counter for successful neighbour add operations.",
+			Name:      "add_bgp_neighbors_success",
+			Help:      "Counter for successful neighbor add operations.",
 		},
 		[]string{"node"},
 	)
 
-	BgpAddNeighbourFailure = prometheus.NewCounterVec(
+	BgpAddNeighborFailure = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: namespace,
-			Name:      "add_bgp_neighbours_failure",
-			Help:      "Counter for failed neighbour add operations.",
+			Name:      "add_bgp_neighbors_failure",
+			Help:      "Counter for failed neighbor add operations.",
 		},
 		[]string{"node"},
 	)
@@ -35,8 +35,8 @@ var (
 
 func init() {
 	prometheus.MustRegister(
-		BgpAddNeighbourSuccess,
-		BgpAddNeighbourFailure,
+		BgpAddNeighborSuccess,
+		BgpAddNeighborFailure,
 	)
 }
 

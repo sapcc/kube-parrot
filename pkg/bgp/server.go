@@ -87,9 +87,9 @@ func (s *Server) AddNeighbor(neighbor string) {
 
 	if err := s.bgp.AddNeighbor(n); err != nil {
 		glog.Errorf("Oops. Something went wrong adding neighbor: %s", err)
-		metrics.BgpAddNeighbourFailure.WithLabelValues(s.localAddress).Inc()
+		metrics.BgpAddNeighborFailure.WithLabelValues(s.localAddress).Inc()
 	}
-	metrics.BgpAddNeighbourSuccess.WithLabelValues(s.localAddress).Inc()
+	metrics.BgpAddNeighborSuccess.WithLabelValues(s.localAddress).Inc()
 }
 
 func (s *Server) GetNeighborBgpState(address string) (string, error) {
