@@ -89,20 +89,14 @@ func (s *Server) AddNeighbor(neighbor string) {
 	}
 }
 
-func (s *Server) GetNeighborBgpState(address string) (string, error) {
+func (s *Server) GetNeighbor(address string) ([]*api.Peer, error) {
 	resp, err := s.grpc.GetNeighbor(context.Background(), &api.GetNeighborRequest{
 		Address:          address,
 		EnableAdvertised: true,
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	for _, p := range resp.GetPeers() {
-		if p.GetInfo().NeighborAddress == address {
-			return string(p.GetInfo().GetBgpState()), nil
-		}
-	}
-
-	return "", fmt.Errorf("no neighbor with address %s found", address)
+	return resp.GetPeers(), nil
 }

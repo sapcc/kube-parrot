@@ -14,8 +14,8 @@ type collector struct {
 	neighbors []*net.IP
 	bgpServer *bgp.Server
 
-	bgpNeighborsTotalMetric,
-	bgpNeighborsSessionStatusMetric *prometheus.Desc
+	bgpNeighborsSessionStatusMetric,
+	bgpNeighborAdvertisedRouteCountTotalMetric *prometheus.Desc
 }
 
 func RegisterCollector(nodeName string, neighbors []*net.IP, bgpServer *bgp.Server) {
@@ -35,30 +35,50 @@ func newCollector(nodeName string, neighbors []*net.IP, bgpServer *bgp.Server) *
 			[]string{"node", "neighbor", "status"},
 			nil,
 		),
+		bgpNeighborAdvertisedRouteCountTotalMetric: prometheus.NewDesc(
+			"kube_parrot_bgp_neighbor_advertised_route_count_total",
+			"Total count of advertised routes to BGP neighbor.",
+			[]string{"node", "neighbor"},
+			nil,
+		),
 	}
 }
 
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.bgpNeighborsSessionStatusMetric
+	ch <- c.bgpNeighborAdvertisedRouteCountTotalMetric
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	for _, neighbor := range c.neighbors {
-		sessionStatus, err := c.bgpServer.GetNeighborBgpState(neighbor.String())
+		neighborList, err := c.bgpServer.GetNeighbor(neighbor.String())
 		if err != nil {
 			glog.Infof("failed to get session status for BGP neighbor: %v", err)
 			continue
 		}
 
-		for _, status := range sessionStati {
+		for _, n := range neighborList {
+			// Report BGP sessions status metrics.
+			for _, status := range sessionStati {
+				ch <- prometheus.MustNewConstMetric(
+					c.bgpNeighborsSessionStatusMetric,
+					prometheus.GaugeValue,
+					boolToFloat64(n.GetInfo().GetBgpState() == status),
+					c.nodeName,
+					neighbor.String(),
+					status,
+				)
+			}
+
+			// Report count of advertised routes.
 			ch <- prometheus.MustNewConstMetric(
-				c.bgpNeighborsSessionStatusMetric,
+				c.bgpNeighborAdvertisedRouteCountTotalMetric,
 				prometheus.GaugeValue,
-				boolToFloat64(sessionStatus == status),
+				float64(n.GetInfo().GetAdvertised()),
 				c.nodeName,
 				neighbor.String(),
-				status,
 			)
+
 		}
 	}
 }
