@@ -1,4 +1,4 @@
-package parrot
+package metrics
 
 import (
 	"github.com/golang/glog"
