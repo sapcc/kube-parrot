@@ -20,7 +20,7 @@ func init() {
 	flag.IntVar(&opts.As, "as", 65000, "global AS")
 	flag.StringVar(&opts.NodeName, "nodename", "", "Name of the node this pod is running on")
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
-	flag.IntVar(&opts.MetricsPort, "metrics-port", 30039, "Port for Prometheus metrics")
+	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
 }
 
 func main() {
