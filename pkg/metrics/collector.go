@@ -14,10 +14,12 @@ type collector struct {
 	neighbors []*net.IP
 	bgpServer *bgp.Server
 
+	bgpServerErrorsTotal,
 	bgpNeighborsSessionStatusMetric,
 	bgpNeighborAdvertisedRouteCountTotalMetric *prometheus.Desc
 }
 
+// RegisterCollector registers a new Prometheus metrics collector.
 func RegisterCollector(nodeName string, neighbors []*net.IP, bgpServer *bgp.Server) {
 	prometheus.MustRegister(
 		newCollector(nodeName, neighbors, bgpServer),
@@ -29,6 +31,12 @@ func newCollector(nodeName string, neighbors []*net.IP, bgpServer *bgp.Server) *
 		nodeName:  nodeName,
 		neighbors: neighbors,
 		bgpServer: bgpServer,
+		bgpServerErrorsTotal: prometheus.NewDesc(
+			"kube_parrot_bgp_server_errors_total",
+			"Counter for BGP server errors.",
+			[]string{"node"},
+			nil,
+		),
 		bgpNeighborsSessionStatusMetric: prometheus.NewDesc(
 			"kube_parrot_bgp_neighbor_session_status",
 			"Session status of BGP neighbors.",
@@ -45,6 +53,7 @@ func newCollector(nodeName string, neighbors []*net.IP, bgpServer *bgp.Server) *
 }
 
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.bgpServerErrorsTotal
 	ch <- c.bgpNeighborsSessionStatusMetric
 	ch <- c.bgpNeighborAdvertisedRouteCountTotalMetric
 }
@@ -54,6 +63,12 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		neighborList, err := c.bgpServer.GetNeighbor(neighbor.String())
 		if err != nil {
 			glog.Infof("failed to get session status for BGP neighbor: %v", err)
+			ch <- prometheus.MustNewConstMetric(
+				c.bgpServerErrorsTotal,
+				prometheus.CounterValue,
+				1,
+				c.nodeName,
+			)
 			continue
 		}
 

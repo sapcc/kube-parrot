@@ -2,6 +2,7 @@ package bgp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -96,6 +97,14 @@ func (s *Server) GetNeighbor(address string) ([]*api.Peer, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	// GoBGP server didn't return any neighbors (aka peers) though there are some configured.
+	if resp.GetPeers() == nil {
+		return nil, errors.New("invalid reply from goBGP server")
+	}
+	if len(resp.GetPeers()) == 0 {
+		return nil, errors.New("invalid reply from goBGP server")
 	}
 
 	return resp.GetPeers(), nil
