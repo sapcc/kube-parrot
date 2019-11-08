@@ -9,6 +9,7 @@ import (
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
+	"github.com/sapcc/kube-parrot/pkg/metrics"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
@@ -18,11 +19,12 @@ var (
 )
 
 type Options struct {
-	GrpcPort  int
-	As        int
-	NodeName  string
-	HostIP    net.IP
-	Neighbors []*net.IP
+	GrpcPort    int
+	As          int
+	NodeName    string
+	HostIP      net.IP
+	Neighbors   []*net.IP
+	MetricsPort int
 }
 
 type Parrot struct {
@@ -42,6 +44,9 @@ func New(opts Options) *Parrot {
 		bgp:     bgp.NewServer(&opts.HostIP, opts.As, opts.GrpcPort),
 		client:  NewClient(),
 	}
+
+	// Register parrot prometheus metrics collector.
+	metrics.RegisterCollector(p.NodeName, opts.Neighbors, p.bgp)
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
 	p.externalSevices = controller.NewExternalServicesController(p.informers, &opts.HostIP, opts.NodeName, p.bgp.ExternalIPRoutes)

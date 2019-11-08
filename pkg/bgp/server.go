@@ -1,6 +1,8 @@
 package bgp
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -86,4 +88,24 @@ func (s *Server) AddNeighbor(neighbor string) {
 	if err := s.bgp.AddNeighbor(n); err != nil {
 		glog.Errorf("Oops. Something went wrong adding neighbor: %s", err)
 	}
+}
+
+func (s *Server) GetNeighbor(address string) ([]*api.Peer, error) {
+	resp, err := s.grpc.GetNeighbor(context.Background(), &api.GetNeighborRequest{
+		Address:          address,
+		EnableAdvertised: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// GoBGP server didn't return any neighbors (aka peers) though there are some configured.
+	if resp.GetPeers() == nil {
+		return nil, errors.New("invalid reply from goBGP server")
+	}
+	if len(resp.GetPeers()) == 0 {
+		return nil, errors.New("invalid reply from goBGP server")
+	}
+
+	return resp.GetPeers(), nil
 }
