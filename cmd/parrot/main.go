@@ -2,6 +2,7 @@ package main
 
 import (
 	goflag "flag"
+	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -14,13 +15,17 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
+type Neighbors []*net.IP
+
 var opts parrot.Options
+var neighbors Neighbors
 
 func init() {
 	flag.IntVar(&opts.As, "as", 65000, "global AS")
 	flag.StringVar(&opts.NodeName, "nodename", "", "Name of the node this pod is running on")
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
 	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
+	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
 }
 
 func main() {
@@ -32,7 +37,12 @@ func main() {
 	stop := make(chan struct{})
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	opts.Neighbors = getNeighbors(opts.HostIP.To4())
+	if neighbors != nil {
+		opts.Neighbors = neighbors
+	} else {
+		opts.Neighbors = getNeighbors(opts.HostIP.To4())
+	}
+
 	opts.GrpcPort = 12345
 	parrot := parrot.New(opts)
 
@@ -46,6 +56,24 @@ func main() {
 	wg.Wait()   // Wait for all to be stopped
 
 	glog.V(2).Infof("Shutdown Completed. Bye!")
+}
+
+func (f *Neighbors) String() string {
+	return fmt.Sprintf("%v", *f)
+}
+
+func (i *Neighbors) Set(value string) error {
+	ip := net.ParseIP(value)
+	if ip == nil {
+		return fmt.Errorf("%v is not a valid IP address", value)
+	}
+
+	*i = append(*i, &ip)
+	return nil
+}
+
+func (s *Neighbors) Type() string {
+	return "neighborSlice"
 }
 
 func getNeighbors(local net.IP) []*net.IP {
