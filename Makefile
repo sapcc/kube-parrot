@@ -17,7 +17,7 @@ GOFILES  := $(wildcard $(GOFILES))
 all: bin/$(GOOS)/parrot
 
 bin/%/parrot: $(GOFILES) Makefile
-	GOOS=$* GOARCH=amd64 go build $(GOFLAGS) -mod vendor -v -i -o bin/$*/parrot ./cmd/parrot
+	GOOS=$* GOARCH=amd64 go build $(GOFLAGS) -v -i -o bin/$*/parrot ./cmd/parrot
 
 build: bin/linux/parrot
 	docker build -t $(IMAGE):$(VERSION) .
