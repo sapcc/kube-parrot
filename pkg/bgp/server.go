@@ -1,6 +1,8 @@
 package bgp
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -20,13 +22,11 @@ type Server struct {
 	routerId     string
 	localAddress string
 
-	ExternalIPRoutes        *ExternalIPRoutesStore
-	NodePodSubnetRoutes     *NodePodSubnetRoutesStore
-	NodeServiceSubnetRoutes *NodeServiceSubnetRoutesStore
-	APIServerRoutes         *APIServerRoutesStore
+	ExternalIPRoutes    *ExternalIPRoutesStore
+	NodePodSubnetRoutes *NodePodSubnetRoutesStore
 }
 
-func NewServer(localAddress net.IP, as int, port int, masterIP net.IP) *Server {
+func NewServer(localAddress *net.IP, as int, port int) *Server {
 	server := &Server{
 		localAddress: localAddress.String(),
 		routerId:     localAddress.String(),
@@ -35,8 +35,6 @@ func NewServer(localAddress net.IP, as int, port int, masterIP net.IP) *Server {
 
 	server.ExternalIPRoutes = newExternalIPRoutesStore(server)
 	server.NodePodSubnetRoutes = newNodePodSubnetRoutesStore(server)
-	server.NodeServiceSubnetRoutes = newNodeServiceSubnetRoutesStore(server)
-	server.APIServerRoutes = newAPIServerRoutesStore(server, masterIP)
 
 	server.bgp = gobgp.NewBgpServer()
 	server.grpc = api.NewGrpcServer(
@@ -90,4 +88,24 @@ func (s *Server) AddNeighbor(neighbor string) {
 	if err := s.bgp.AddNeighbor(n); err != nil {
 		glog.Errorf("Oops. Something went wrong adding neighbor: %s", err)
 	}
+}
+
+func (s *Server) GetNeighbor(address string) ([]*api.Peer, error) {
+	resp, err := s.grpc.GetNeighbor(context.Background(), &api.GetNeighborRequest{
+		Address:          address,
+		EnableAdvertised: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// GoBGP server didn't return any neighbors (aka peers) though there are some configured.
+	if resp.GetPeers() == nil {
+		return nil, errors.New("invalid reply from goBGP server")
+	}
+	if len(resp.GetPeers()) == 0 {
+		return nil, errors.New("invalid reply from goBGP server")
+	}
+
+	return resp.GetPeers(), nil
 }

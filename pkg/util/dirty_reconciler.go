@@ -1,4 +1,4 @@
-package reconciler
+package util 
 
 import "github.com/sapcc/kube-parrot/pkg/forked/workqueue"
 

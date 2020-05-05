@@ -1,20 +1,18 @@
 package main
 
 import (
+	goflag "flag"
 	"fmt"
 	"net"
-	"sync"
-
-	goflag "flag"
-
-	"github.com/golang/glog"
-	flag "github.com/spf13/pflag"
-
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
+	"github.com/golang/glog"
+	"github.com/sapcc/kube-parrot/pkg/metrics"
 	"github.com/sapcc/kube-parrot/pkg/parrot"
+	flag "github.com/spf13/pflag"
 )
 
 type Neighbors []*net.IP
@@ -23,12 +21,10 @@ var opts parrot.Options
 var neighbors Neighbors
 
 func init() {
-	flag.StringVar(&opts.Kubeconfig, "kubeconfig", "", "Path to kubeconfig file with authorization and master location information.")
 	flag.IntVar(&opts.As, "as", 65000, "global AS")
-	flag.IPVar(&opts.LocalAddress, "local_address", net.ParseIP("127.0.0.1"), "local IP address")
-	flag.IPVar(&opts.MasterAddress, "master_address", net.ParseIP("127.0.0.1"), "master IP address")
-	flag.IPNetVar(&opts.ServiceSubnet, "service_subnet", net.IPNet{}, "service subnet")
-
+	flag.StringVar(&opts.NodeName, "nodename", "", "Name of the node this pod is running on")
+	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
+	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
 	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
 }
 
@@ -39,14 +35,20 @@ func main() {
 
 	sigs := make(chan os.Signal, 1)
 	stop := make(chan struct{})
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
-	opts.Neighbors = neighbors
+	if neighbors != nil {
+		opts.Neighbors = neighbors
+	} else {
+		opts.Neighbors = getNeighbors(opts.HostIP.To4())
+	}
 	opts.GrpcPort = 12345
 	parrot := parrot.New(opts)
 
 	wg := &sync.WaitGroup{}
 	parrot.Run(stop, wg)
+
+	go metrics.ServeMetrics(opts.HostIP, opts.MetricsPort, wg, stop)
 
 	<-sigs      // Wait for signals
 	close(stop) // Stop all goroutines
@@ -71,4 +73,16 @@ func (i *Neighbors) Set(value string) error {
 
 func (s *Neighbors) Type() string {
 	return "neighborSlice"
+}
+
+func getNeighbors(local net.IP) []*net.IP {
+	n1 := make(net.IP, len(local))
+	n2 := make(net.IP, len(local))
+	copy(n1, local)
+	copy(n2, local)
+
+	n1[3] = n1[3] - 1
+	n2[3] = n2[3] - 2
+
+	return []*net.IP{&n1, &n2}
 }

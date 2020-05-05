@@ -1,29 +1,25 @@
 package parrot
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/golang/glog"
 
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/rest"
 )
 
-func NewClient(kubeconfig string) *kubernetes.Clientset {
-	glog.V(2).Infof("Creating Client")
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	overrides := &clientcmd.ConfigOverrides{}
-
-	if kubeconfig != "" {
-		rules.ExplicitPath = kubeconfig
-	}
-
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides).ClientConfig()
+func NewClient() *kubernetes.Clientset {
+	config, err := rest.InClusterConfig()
 	if err != nil {
-		glog.Fatalf("Couldn't get Kubernetes default config: %s", err)
+		fmt.Println("kube-parrot can now only run in-cluster as a sidecar to kube-proxy. over and out.")
+		os.Exit(-1)
 	}
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		glog.Fatalf("Couldn't create Kubernetes client: %s", err)
+		panic(err.Error())
 	}
 
 	glog.V(3).Infof("Using Kubernetes Api at %s", config.Host)
