@@ -139,17 +139,20 @@ func (c *ExternalServicesController) endpointsUpdate(old, cur interface{}) {
 
 func (c *ExternalServicesController) reconcile() error {
 	for _, route := range c.routes.List() {
-		if _, ok, _ := c.services.Get(route.Service); !ok {
+		obj, svcFound, _ := c.services.Get(route.Service)
+		if !svcFound {
 			if err := c.routes.Delete(route); err != nil {
 				return err
 			}
+			continue
 		}
+		svc := obj.(*v1.Service)
 
-		if eps, ok, _ := c.endpoints.Get(route.Service); !ok {
+		if eps, ok, _ := c.endpoints.Get(svc); !ok {
 			if err := c.routes.Delete(route); err != nil {
 				return err
 			}
-		} else if route.Service.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal {
+		} else if svc.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal {
 			if !hasEndpointOnNode(c.nodeName, eps.(*v1.Endpoints)) {
 				if err := c.routes.Delete(route); err != nil {
 					return err
