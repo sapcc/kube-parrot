@@ -79,10 +79,10 @@ func (c *ExternalServicesController) serviceAdd(obj interface{}) {
 	if _, exists, _ := c.services.Get(service); !exists {
 		glog.V(3).Infof("Adding Service (%s)", service.Name)
 		c.services.Add(service)
-		c.reconciler.Dirty()
 	} else {
 		c.services.Update(service) // update service object in cache
 	}
+	c.reconciler.Dirty()
 }
 
 func (c *ExternalServicesController) serviceUpdate(old, cur interface{}) {
