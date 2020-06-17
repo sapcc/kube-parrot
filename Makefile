@@ -1,5 +1,5 @@
 DATE    = $(shell date +%Y%m%d%H%M)
-IMAGE   ?= sapcc/kube-plucked-parrot
+IMAGE   ?= sapcc/kube-parrot
 VERSION = v$(DATE)
 GOOS    ?= darwin
 
