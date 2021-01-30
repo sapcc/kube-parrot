@@ -8,10 +8,13 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/sapcc/kube-parrot/pkg/metrics"
 	"github.com/sapcc/kube-parrot/pkg/parrot"
+	"github.com/sapcc/go-traceroute/traceroute"
+	"golang.org/x/net/context"
 	flag "github.com/spf13/pflag"
 )
 
@@ -40,7 +43,7 @@ func main() {
 	if neighbors != nil {
 		opts.Neighbors = neighbors
 	} else {
-		opts.Neighbors = getNeighbors(opts.HostIP.To4())
+		opts.Neighbors = getNeighbors()
 	}
 	opts.GrpcPort = 12345
 	parrot := parrot.New(opts)
@@ -75,14 +78,52 @@ func (s *Neighbors) Type() string {
 	return "neighborSlice"
 }
 
-func getNeighbors(local net.IP) []*net.IP {
-	n1 := make(net.IP, len(local))
-	n2 := make(net.IP, len(local))
-	copy(n1, local)
-	copy(n2, local)
+// getNeighbors discovers next-hops by sending traceroute packets with ttl=1
+func getNeighbors() []*net.IP {
+	t := &traceroute.Tracer{
+		Config: traceroute.Config{
+			Delay:    50 * time.Millisecond,
+			Timeout:  time.Second,
+			MaxHops:  1,
+			Count:    1,
+			Networks: []string{"ip4:icmp", "ip4:ip"},
+		},
+	}
+	defer t.Close()
 
-	n1[3] = n1[3] - 1
-	n2[3] = n2[3] - 2
+	var h []string
+	for i := 0; i < 10; i++ {
+		dst := fmt.Sprintf("1.1.1.%v", i)
+		err := t.Trace(context.Background(), net.ParseIP(dst), func(reply *traceroute.Reply) {
+			hop := reply.IP
 
-	return []*net.IP{&n1, &n2}
+			h = append(h, hop.String())
+
+		})
+		if err != nil {
+			glog.Fatal(err)
+		}
+	}
+	hops := unique(h)
+
+	var neigh []*net.IP
+	for _, n := range hops {
+		ip := net.ParseIP(n)
+		neigh = append(neigh, &ip)
+	}
+	return neigh
+}
+
+
+// unique removes duplicate values from slice of strings
+func unique(stringSlice []string) []string {
+	keys := make(map[string]bool)
+	var list []string
+	for _, entry := range stringSlice {
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			list = append(list, entry)
+		}
+	}
+	return list
 }
