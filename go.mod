@@ -7,8 +7,7 @@ require (
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/dgryski/go-farm v0.0.0-20180109070241-2de33835d102 // indirect
 	github.com/eapache/channels v1.1.0 // indirect
-	github.com/eapache/queue v1.1.0
-	github.com/ghodss/yaml v0.0.0-20150909031657-73d445a93680 // indirect
+	github.com/eapache/queue v1.1.0 // indirect
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 	github.com/golang/groupcache v0.0.0-20191027212112-611e8accdfc9 // indirect
 	github.com/hashicorp/hcl v0.0.0-20161008073557-6f5bfed9a0a2 // indirect
@@ -28,6 +27,7 @@ require (
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910 // indirect
 	github.com/prometheus/common v0.0.0-20180801064454-c7de2306084e // indirect
 	github.com/prometheus/procfs v0.0.0-20180725123919-05ee40e3a273 // indirect
+	github.com/sapcc/go-traceroute v0.0.0-20210130143923-d034613e85fc
 	github.com/satori/go.uuid v0.0.0-20180103174451-36e9d2ebbde5 // indirect
 	github.com/sirupsen/logrus v1.6.0 // indirect
 	github.com/spf13/afero v0.0.0-20160919210114-52e4a6cfac46 // indirect
@@ -38,8 +38,8 @@ require (
 	github.com/stretchr/testify v1.4.0 // indirect
 	github.com/vishvananda/netlink v0.0.0-20160920235349-da7420cab5e2 // indirect
 	github.com/vishvananda/netns v0.0.0-20160430053723-8ba1072b58e0 // indirect
+	golang.org/x/net v0.0.0-20190812203447-cdfb69ac37fc
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
-	golang.org/x/sys v0.0.0-20190422165155-953cdadca894
 	google.golang.org/genproto v0.0.0-20170731182057-09f6ed296fc6 // indirect
 	google.golang.org/grpc v1.5.1 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect

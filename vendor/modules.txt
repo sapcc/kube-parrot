@@ -56,6 +56,8 @@ github.com/influxdata/influxdb/pkg/escape
 github.com/json-iterator/go
 # github.com/juju/ratelimit v0.0.0-20151125201925-77ed1c8a0121
 github.com/juju/ratelimit
+# github.com/konsorten/go-windows-terminal-sequences v1.0.3
+github.com/konsorten/go-windows-terminal-sequences
 # github.com/kr/fs v0.0.0-20131111012553-2788f0dbd169
 github.com/kr/fs
 # github.com/magiconair/properties v0.0.0-20160908093658-0723e352fa35
@@ -101,9 +103,11 @@ github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/util
 github.com/prometheus/procfs/nfs
 github.com/prometheus/procfs/xfs
+# github.com/sapcc/go-traceroute v0.0.0-20210130143923-d034613e85fc
+github.com/sapcc/go-traceroute/traceroute
 # github.com/satori/go.uuid v0.0.0-20180103174451-36e9d2ebbde5
 github.com/satori/go.uuid
-# github.com/sirupsen/logrus v0.0.0-20160829202321-3ec0642a7fb6
+# github.com/sirupsen/logrus v1.6.0
 github.com/sirupsen/logrus
 # github.com/spf13/afero v0.0.0-20160919210114-52e4a6cfac46
 github.com/spf13/afero
@@ -132,18 +136,24 @@ golang.org/x/crypto/poly1305
 golang.org/x/crypto/ssh
 golang.org/x/crypto/ssh/terminal
 # golang.org/x/net v0.0.0-20190812203447-cdfb69ac37fc
+golang.org/x/net/bpf
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp
 golang.org/x/net/http/httpguts
 golang.org/x/net/http2
 golang.org/x/net/http2/hpack
+golang.org/x/net/icmp
 golang.org/x/net/idna
+golang.org/x/net/internal/iana
+golang.org/x/net/internal/socket
 golang.org/x/net/internal/timeseries
+golang.org/x/net/ipv4
+golang.org/x/net/ipv6
 golang.org/x/net/trace
 # golang.org/x/oauth2 v0.0.0-20190402181905-9f3314589c9a
 golang.org/x/oauth2
 golang.org/x/oauth2/internal
-# golang.org/x/sys v0.0.0-20190312061237-fead79001313
+# golang.org/x/sys v0.0.0-20190422165155-953cdadca894
 golang.org/x/sys/unix
 golang.org/x/sys/windows
 # golang.org/x/text v0.3.1-0.20181227161524-e6919f6577db
