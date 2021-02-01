@@ -21,6 +21,7 @@ import (
 type Neighbors []*net.IP
 
 var opts parrot.Options
+var TraceCount int
 var neighbors Neighbors
 
 func init() {
@@ -29,6 +30,7 @@ func init() {
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
 	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
 	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
+	flag.IntVar(&TraceCount, "traceroute-count", 10, "Amount of traceroute packets to send with ttl of 1 for dynamic neighbor discovery")
 }
 
 func main() {
@@ -92,7 +94,7 @@ func getNeighbors() []*net.IP {
 	defer t.Close()
 
 	var h []string
-	for i := 0; i < 10; i++ {
+	for i := 0; i < TraceCount; i++ {
 		dst := fmt.Sprintf("1.1.1.%v", i)
 		err := t.Trace(context.Background(), net.ParseIP(dst), func(reply *traceroute.Reply) {
 			hop := reply.IP
