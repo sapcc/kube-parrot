@@ -8,10 +8,13 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/sapcc/kube-parrot/pkg/metrics"
 	"github.com/sapcc/kube-parrot/pkg/parrot"
+	"github.com/sapcc/go-traceroute/traceroute"
+	"golang.org/x/net/context"
 	flag "github.com/spf13/pflag"
 )
 
@@ -26,6 +29,8 @@ func init() {
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
 	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
 	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
+	flag.IntVar(&opts.TraceCount, "traceroute-count", 10, "Amount of traceroute packets to send with ttl of 1 for dynamic neighbor discovery")
+	flag.IntVar(&opts.NeighborCount, "neighbor-count", 2, "Amount of expected BGP neighbors. Used with dynamic neighbor discovery")
 }
 
 func main() {
@@ -40,7 +45,7 @@ func main() {
 	if neighbors != nil {
 		opts.Neighbors = neighbors
 	} else {
-		opts.Neighbors = getNeighbors(opts.HostIP.To4())
+		opts.Neighbors = getNeighbors()
 	}
 	opts.GrpcPort = 12345
 	parrot := parrot.New(opts)
@@ -75,14 +80,38 @@ func (s *Neighbors) Type() string {
 	return "neighborSlice"
 }
 
-func getNeighbors(local net.IP) []*net.IP {
-	n1 := make(net.IP, len(local))
-	n2 := make(net.IP, len(local))
-	copy(n1, local)
-	copy(n2, local)
+// getNeighbors discovers next-hops by sending traceroute packets with ttl=1
+func getNeighbors() []*net.IP {
+	t := &traceroute.Tracer{
+		Config: traceroute.Config{
+			Delay:    50 * time.Millisecond,
+			Timeout:  time.Second,
+			MaxHops:  1,
+			Count:    1,
+			Networks: []string{"ip4:icmp", "ip4:ip"},
+		},
+	}
+	defer t.Close()
 
-	n1[3] = n1[3] - 1
-	n2[3] = n2[3] - 2
+	h := make(map[string]struct{})
+	for i := 0; i < opts.TraceCount; i++ {
+		dst := fmt.Sprintf("1.1.1.%v", i)
+		err := t.Trace(context.Background(), net.ParseIP(dst), func(reply *traceroute.Reply) {
 
-	return []*net.IP{&n1, &n2}
+			h[reply.IP.String()] = struct{}{}
+		})
+		if err != nil {
+			glog.Fatal(err)
+		}
+	}
+
+	var neigh []*net.IP
+	for k, _ := range h {
+		ip := net.ParseIP(k)
+		neigh = append(neigh, &ip)
+	}
+	if len(neigh) != opts.NeighborCount {
+		glog.Fatalf("Discovered %d neighbors: %v, but was expecting %d neighbors. Exiting", len(neigh), neigh, opts.NeighborCount)
+	}
+	return neigh
 }
