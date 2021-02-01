@@ -19,12 +19,14 @@ var (
 )
 
 type Options struct {
-	GrpcPort    int
-	As          int
-	NodeName    string
-	HostIP      net.IP
-	Neighbors   []*net.IP
-	MetricsPort int
+	GrpcPort      int
+	As            int
+	NodeName      string
+	HostIP        net.IP
+	Neighbors     []*net.IP
+	MetricsPort   int
+	TraceCount    int
+	NeighborCount int
 }
 
 type Parrot struct {

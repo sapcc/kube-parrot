@@ -21,7 +21,6 @@ import (
 type Neighbors []*net.IP
 
 var opts parrot.Options
-var TraceCount int
 var neighbors Neighbors
 
 func init() {
@@ -30,7 +29,8 @@ func init() {
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
 	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
 	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
-	flag.IntVar(&TraceCount, "traceroute-count", 10, "Amount of traceroute packets to send with ttl of 1 for dynamic neighbor discovery")
+	flag.IntVar(&opts.TraceCount, "traceroute-count", 10, "Amount of traceroute packets to send with ttl of 1 for dynamic neighbor discovery")
+	flag.IntVar(&opts.NeighborCount, "neighbor-count", 2, "Amount of expected BGP neighbors. Used with dynamic neighbor discovery")
 }
 
 func main() {
@@ -93,39 +93,25 @@ func getNeighbors() []*net.IP {
 	}
 	defer t.Close()
 
-	var h []string
-	for i := 0; i < TraceCount; i++ {
+	h := make(map[string]struct{})
+	for i := 0; i < opts.TraceCount; i++ {
 		dst := fmt.Sprintf("1.1.1.%v", i)
 		err := t.Trace(context.Background(), net.ParseIP(dst), func(reply *traceroute.Reply) {
-			hop := reply.IP
 
-			h = append(h, hop.String())
-
+			h[reply.IP.String()] = struct{}{}
 		})
 		if err != nil {
 			glog.Fatal(err)
 		}
 	}
-	hops := unique(h)
 
 	var neigh []*net.IP
-	for _, n := range hops {
-		ip := net.ParseIP(n)
+	for k, _ := range h {
+		ip := net.ParseIP(k)
 		neigh = append(neigh, &ip)
 	}
-	return neigh
-}
-
-
-// unique removes duplicate values from slice of strings
-func unique(stringSlice []string) []string {
-	keys := make(map[string]bool)
-	var list []string
-	for _, entry := range stringSlice {
-		if _, value := keys[entry]; !value {
-			keys[entry] = true
-			list = append(list, entry)
-		}
+	if len(neigh) != opts.NeighborCount {
+		glog.Fatalf("Discovered %d neighbors: %v, but was expecting %d neighbors. Exiting", len(neigh), neigh, opts.NeighborCount)
 	}
-	return list
+	return neigh
 }
