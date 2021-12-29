@@ -2,3 +2,4 @@
 vendor
 pkg
 cmd
+kubeconfig.yaml

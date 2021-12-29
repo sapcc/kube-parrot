@@ -1,0 +1,132 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-parrot
+  namespace: kube-system
+  labels:
+    addonmanager.kubernetes.io/mode: Reconcile
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: system:kube-parrot
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - endpoints
+  - services
+  - nodes
+  verbs:
+  - list
+  - watch
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: system:kube-parrot
+subjects:
+  - kind: ServiceAccount
+    name: kube-parrot
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:kube-parrot
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  annotations:
+  labels:
+    k8s-app: kube-parrot
+  name: kube-parrot
+spec:
+  selector:
+    matchLabels:
+      name: kube-parrot
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        name: kube-parrot
+        k8s-app: kube-parrot
+      annotations:
+    spec:
+      priorityClassName: system-node-critical
+      containers:
+      - name: parrot
+        image: $PARROT_IMAGE
+        imagePullPolicy: IfNotPresent
+        command:
+          - /parrot
+          - --as=65001
+          - --nodename=$(NODE_NAME)
+          - --hostip=$(HOST_IP)
+          - --logtostderr
+          - --neighbor-count=2
+          - --neighbor=10.0.0.2
+          - --neighbor=10.0.0.3
+          - --metric-port=30039
+        env:
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: HOST_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.hostIP
+        volumeMounts:
+          - name: etc-kubernetes-kube-parrot
+            mountPath: /etc/kubernetes/kube-parrot
+        ports:
+          - name: parrot-metrics
+            containerPort: 30039
+            hostPort: 30039
+      hostNetwork: true
+      serviceAccountName: kube-parrot
+      terminationGracePeriodSeconds: 5
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: etc-kubernetes-kube-parrot
+          hostPath:
+            path: /etc/kubernetes/kube-parrot
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    app: nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.14.2
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+spec:
+  selector:
+    app: nginx
+  externalIPs:
+    - 10.0.0.100
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80

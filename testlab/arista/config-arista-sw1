@@ -1,0 +1,28 @@
+transceiver qsfp default-mode 4x10G
+!
+service routing protocols model ribd
+!
+hostname SW1
+!
+spanning-tree mode mstp
+!
+no aaa root
+!
+interface Ethernet1
+   description "Docker network net2 - SW2"
+   no switchport
+   ip address 10.0.0.2/24
+   ip virtual-router address 10.0.0.1
+!
+ip routing
+ip virtual-router mac-address 001c.7300.0099
+!
+router bgp 65001
+   bgp listen range 10.0.0.0/24 peer-group IPv4-OVERLAY-CP-NODE remote-as 65001
+   neighbor IPv4-OVERLAY-CP-NODE peer group
+   neighbor IPv4-OVERLAY-CP-NODE remote-as 65001
+   !
+   address-family ipv4
+      neighbor IPv4-OVERLAY-CP-NODE activate
+!
+end
