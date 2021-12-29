@@ -58,7 +58,6 @@ services:
       - K3S_KUBECONFIG_OUTPUT=/output/kubeconfig.yaml
       - K3S_KUBECONFIG_MODE=666
     volumes:
-      - ${PWD}/testlab/parrot/kube-parrot.yaml:/opt/kube-parrot.yaml
       - ${PWD}/testlab/parrot/config:/etc/kubernetes/kube-parrot/config
       # This is just so that we get the kubeconfig file out
       - .:/output

@@ -12,7 +12,7 @@ A Kubernetes Controller that Dynamically Announces Routes with BGP
             |            |
             |     iBGP   |     ↑
          ╭― ― ― ― ― ― ― ― ―╮   podcidr    169.0.0.0/24
-         │       k3s       │   externalIP 10.0.0.100 
+         │       k3s       │   externalIP 10.1.0.100 
          │    10.0.0.10    │   any other svc w/ externalIP
          ╰― ― ― ― ― ― ― ― ―╯
 ```
@@ -42,7 +42,7 @@ I1229 12:51:33.667271       1 metrics.go:25] Serving Prometheus metrics on 10.0.
 I1229 12:51:33.668747       1 store.go:44] Announcing         169.0.0.0/24 -> 10.0.0.10       (NodePodSubnet: 169.0.0.0/24 -> 5a46ee61b9e6)
 time="2021-12-29T12:51:49Z" level=info msg="Peer Up" Key=10.0.0.3 State=BGP_FSM_OPENCONFIRM Topic=Peer
 time="2021-12-29T12:51:52Z" level=info msg="Peer Up" Key=10.0.0.2 State=BGP_FSM_OPENCONFIRM Topic=Peer
-I1229 12:51:52.674222       1 store.go:44] Announcing        10.0.0.100/32 -> 10.0.0.10       (ExternalIP:    kube-system/nginx -> 10.0.0.10)
+I1229 12:51:52.674222       1 store.go:44] Announcing        10.1.0.100/32 -> 10.0.0.10       (ExternalIP:    kube-system/nginx -> 10.0.0.10)
 
 
 # check from switch side
@@ -58,6 +58,6 @@ Origin codes: i - IGP, e - EGP, ? - incomplete
 AS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop
 
          Network                Next Hop            Metric  LocPref Weight  Path
- * >     10.0.0.100/32          10.0.0.10             0       100     0       i
+ * >     10.1.0.100/32          10.0.0.10             0       100     0       i
  * >     169.0.0.0/24           10.0.0.10             0       100     0       i
 ```

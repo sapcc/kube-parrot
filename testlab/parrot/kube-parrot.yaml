@@ -125,7 +125,7 @@ spec:
   selector:
     app: nginx
   externalIPs:
-    - 10.0.0.100
+    - 10.1.0.100
   ports:
     - protocol: TCP
       port: 80
