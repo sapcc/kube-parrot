@@ -34,11 +34,11 @@ clean:
 lab: build push start parrot
 
 parrot:
+	sleep 60
 	envsubst < ./testlab/parrot/kube-parrot.yaml | kubectl --kubeconfig kubeconfig.yaml --context default -n kube-system apply -f -
 
 start:
 	docker-compose up -d
-	sleep 10
 
 stop:
 	docker-compose down

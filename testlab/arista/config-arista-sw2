@@ -2,14 +2,14 @@ transceiver qsfp default-mode 4x10G
 !
 service routing protocols model ribd
 !
-hostname SW1
+hostname SW2
 !
 spanning-tree mode mstp
 !
 no aaa root
 !
 interface Ethernet1
-   description "Docker network net2 - SW1"
+   description "Docker network net2 - SW2"
    no switchport
    ip address 10.0.0.3/24
    ip virtual-router address 10.0.0.1
