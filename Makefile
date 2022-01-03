@@ -31,14 +31,15 @@ push:
 clean:
 	rm -rf bin/*
 
-lab: build push start parrot
+lab: build push start
 
-parrot:
-	sleep 60
+parrot: build push
 	envsubst < ./testlab/parrot/kube-parrot.yaml | kubectl --kubeconfig kubeconfig.yaml --context default -n kube-system apply -f -
 
 start:
 	docker-compose up -d
+	sleep 60
+	envsubst < ./testlab/parrot/kube-parrot.yaml | kubectl --kubeconfig kubeconfig.yaml --context default -n kube-system apply -f -
 
 stop:
 	docker-compose down
