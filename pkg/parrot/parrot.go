@@ -27,6 +27,7 @@ type Options struct {
 	MetricsPort   int
 	TraceCount    int
 	NeighborCount int
+	PodSubnet     bool
 }
 
 type Parrot struct {
@@ -57,7 +58,7 @@ func New(opts Options) *Parrot {
 	return p
 }
 
-func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
+func (p *Parrot) Run(opts Options, stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	fmt.Printf("Welcome to Kubernetes Parrot %v\n", VERSION)
 
 	go p.bgp.Run(stopCh, wg)
@@ -78,5 +79,7 @@ func (p *Parrot) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	)
 
 	go p.externalSevices.Run(stopCh, wg)
-	go p.podSubnets.Run(stopCh, wg)
+	if opts.PodSubnet {
+		go p.podSubnets.Run(stopCh, wg)
+	}
 }
