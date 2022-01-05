@@ -2,7 +2,7 @@ version: '3'
 services:
   sw1:
     container_name: arista-sw1
-    image: keppel.eu-de-1.cloud.sap/ccloud/arista-ceos:4.26.1F
+    image: keppel.eu-de-1.cloud.sap/ccloud/arista-ceos:4.26.4M
     command: /sbin/init systemd.setenv=INTFTYPE=eth systemd.setenv=ETBA=4
       systemd.setenv=SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT=1 systemd.setenv=CEOS=1
       systemd.setenv=EOS_PLATFORM=ceoslab systemd.setenv=container=docker
@@ -24,7 +24,7 @@ services:
 
   sw2:
     container_name: arista-sw2
-    image: keppel.eu-de-1.cloud.sap/ccloud/arista-ceos:4.26.1F
+    image: keppel.eu-de-1.cloud.sap/ccloud/arista-ceos:4.26.4M
     command: /sbin/init systemd.setenv=INTFTYPE=eth systemd.setenv=ETBA=4
       systemd.setenv=SKIP_ZEROTOUCH_BARRIER_IN_SYSDBINIT=1 systemd.setenv=CEOS=1
       systemd.setenv=EOS_PLATFORM=ceoslab systemd.setenv=container=docker

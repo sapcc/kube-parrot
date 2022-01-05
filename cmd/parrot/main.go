@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/sapcc/go-traceroute/traceroute"
 	"github.com/sapcc/kube-parrot/pkg/metrics"
 	"github.com/sapcc/kube-parrot/pkg/parrot"
-	"github.com/sapcc/go-traceroute/traceroute"
-	"golang.org/x/net/context"
 	flag "github.com/spf13/pflag"
+	"golang.org/x/net/context"
 )
 
 type Neighbors []*net.IP
@@ -31,6 +31,7 @@ func init() {
 	flag.Var(&neighbors, "neighbor", "IP address of a neighbor. Can be specified multiple times...")
 	flag.IntVar(&opts.TraceCount, "traceroute-count", 10, "Amount of traceroute packets to send with ttl of 1 for dynamic neighbor discovery")
 	flag.IntVar(&opts.NeighborCount, "neighbor-count", 2, "Amount of expected BGP neighbors. Used with dynamic neighbor discovery")
+	flag.BoolVar(&opts.PodSubnet, "podsubnet", true, "Announce node podCIDR")
 }
 
 func main() {
@@ -51,7 +52,7 @@ func main() {
 	parrot := parrot.New(opts)
 
 	wg := &sync.WaitGroup{}
-	parrot.Run(stop, wg)
+	parrot.Run(opts, stop, wg)
 
 	go metrics.ServeMetrics(opts.HostIP, opts.MetricsPort, wg, stop)
 

@@ -57,7 +57,7 @@ func loadConfig() (*Config, error) {
 	c := &Config{}
 
 	if _, err := os.Stat(ConfigPath); os.IsNotExist(err) {
-		return c, fmt.Errorf("no config file found at %q", ConfigPath)
+		return c, fmt.Errorf("to advertise node pod subnet, provide config at %q", ConfigPath)
 	}
 	glog.V(2).Infof("config file found at %q", ConfigPath)
 

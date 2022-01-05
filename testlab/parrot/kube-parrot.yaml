@@ -69,6 +69,7 @@ spec:
           - --neighbor=10.0.0.2
           - --neighbor=10.0.0.3
           - --metric-port=30039
+          - --podsubnet=true
         env:
           - name: NODE_NAME
             valueFrom:
