@@ -1,10 +1,12 @@
 package netlink
 
 import (
-	"syscall"
+	"fmt"
+	"time"
 
 	"github.com/vishvananda/netlink/nl"
 	"github.com/vishvananda/netns"
+	"golang.org/x/sys/unix"
 )
 
 // Empty handle used by the netlink package methods
@@ -17,6 +19,22 @@ var pkgHandle = &Handle{}
 type Handle struct {
 	sockets      map[int]*nl.SocketHandle
 	lookupByDump bool
+}
+
+// SetSocketTimeout configures timeout for default netlink sockets
+func SetSocketTimeout(to time.Duration) error {
+	if to < time.Microsecond {
+		return fmt.Errorf("invalid timeout, minimul value is %s", time.Microsecond)
+	}
+
+	nl.SocketTimeoutTv = unix.NsecToTimeval(to.Nanoseconds())
+	return nil
+}
+
+// GetSocketTimeout returns the timeout value used by default netlink sockets
+func GetSocketTimeout() time.Duration {
+	nsec := unix.TimevalToNsec(nl.SocketTimeoutTv)
+	return time.Duration(nsec) * time.Nanosecond
 }
 
 // SupportsNetlinkFamily reports whether the passed netlink family is supported by this Handle
@@ -33,7 +51,63 @@ func NewHandle(nlFamilies ...int) (*Handle, error) {
 	return newHandle(netns.None(), netns.None(), nlFamilies...)
 }
 
-// NewHandle returns a netlink handle on the network namespace
+// SetSocketTimeout sets the send and receive timeout for each socket in the
+// netlink handle. Although the socket timeout has granularity of one
+// microsecond, the effective granularity is floored by the kernel timer tick,
+// which default value is four milliseconds.
+func (h *Handle) SetSocketTimeout(to time.Duration) error {
+	if to < time.Microsecond {
+		return fmt.Errorf("invalid timeout, minimul value is %s", time.Microsecond)
+	}
+	tv := unix.NsecToTimeval(to.Nanoseconds())
+	for _, sh := range h.sockets {
+		if err := sh.Socket.SetSendTimeout(&tv); err != nil {
+			return err
+		}
+		if err := sh.Socket.SetReceiveTimeout(&tv); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SetSocketReceiveBufferSize sets the receive buffer size for each
+// socket in the netlink handle. The maximum value is capped by
+// /proc/sys/net/core/rmem_max.
+func (h *Handle) SetSocketReceiveBufferSize(size int, force bool) error {
+	opt := unix.SO_RCVBUF
+	if force {
+		opt = unix.SO_RCVBUFFORCE
+	}
+	for _, sh := range h.sockets {
+		fd := sh.Socket.GetFd()
+		err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, opt, size)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetSocketReceiveBufferSize gets the receiver buffer size for each
+// socket in the netlink handle. The retrieved value should be the
+// double to the one set for SetSocketReceiveBufferSize.
+func (h *Handle) GetSocketReceiveBufferSize() ([]int, error) {
+	results := make([]int, len(h.sockets))
+	i := 0
+	for _, sh := range h.sockets {
+		fd := sh.Socket.GetFd()
+		size, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF)
+		if err != nil {
+			return nil, err
+		}
+		results[i] = size
+		i++
+	}
+	return results, nil
+}
+
+// NewHandleAt returns a netlink handle on the network namespace
 // specified by ns. If ns=netns.None(), current network namespace
 // will be assumed
 func NewHandleAt(ns netns.NsHandle, nlFamilies ...int) (*Handle, error) {
@@ -76,10 +150,10 @@ func (h *Handle) newNetlinkRequest(proto, flags int) *nl.NetlinkRequest {
 		return nl.NewNetlinkRequest(proto, flags)
 	}
 	return &nl.NetlinkRequest{
-		NlMsghdr: syscall.NlMsghdr{
-			Len:   uint32(syscall.SizeofNlMsghdr),
+		NlMsghdr: unix.NlMsghdr{
+			Len:   uint32(unix.SizeofNlMsghdr),
 			Type:  uint16(proto),
-			Flags: syscall.NLM_F_REQUEST | uint16(flags),
+			Flags: unix.NLM_F_REQUEST | uint16(flags),
 		},
 		Sockets: h.sockets,
 	}

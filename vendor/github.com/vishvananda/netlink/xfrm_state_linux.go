@@ -2,10 +2,10 @@ package netlink
 
 import (
 	"fmt"
-	"syscall"
 	"unsafe"
 
 	"github.com/vishvananda/netlink/nl"
+	"golang.org/x/sys/unix"
 )
 
 func writeStateAlgo(a *XfrmStateAlgo) []byte {
@@ -60,6 +60,23 @@ func writeMark(m *XfrmMark) []byte {
 	return mark.Serialize()
 }
 
+func writeReplayEsn(replayWindow int) []byte {
+	replayEsn := &nl.XfrmReplayStateEsn{
+		OSeq:         0,
+		Seq:          0,
+		OSeqHi:       0,
+		SeqHi:        0,
+		ReplayWindow: uint32(replayWindow),
+	}
+
+	// Linux stores the bitmap to identify the already received sequence packets in blocks of uint32 elements.
+	// Therefore bitmap length is the minimum number of uint32 elements needed. The following is a ceiling operation.
+	bytesPerElem := int(unsafe.Sizeof(replayEsn.BmpLen)) // Any uint32 variable is good for this
+	replayEsn.BmpLen = uint32((replayWindow + (bytesPerElem * 8) - 1) / (bytesPerElem * 8))
+
+	return replayEsn.Serialize()
+}
+
 // XfrmStateAdd will add an xfrm state to the system.
 // Equivalent to: `ip xfrm state add $state`
 func XfrmStateAdd(state *XfrmState) error {
@@ -70,6 +87,12 @@ func XfrmStateAdd(state *XfrmState) error {
 // Equivalent to: `ip xfrm state add $state`
 func (h *Handle) XfrmStateAdd(state *XfrmState) error {
 	return h.xfrmStateAddOrUpdate(state, nl.XFRM_MSG_NEWSA)
+}
+
+// XfrmStateAllocSpi will allocate an xfrm state in the system.
+// Equivalent to: `ip xfrm state allocspi`
+func XfrmStateAllocSpi(state *XfrmState) (*XfrmState, error) {
+	return pkgHandle.xfrmStateAllocSpi(state)
 }
 
 // XfrmStateUpdate will update an xfrm state to the system.
@@ -85,21 +108,23 @@ func (h *Handle) XfrmStateUpdate(state *XfrmState) error {
 }
 
 func (h *Handle) xfrmStateAddOrUpdate(state *XfrmState, nlProto int) error {
+
 	// A state with spi 0 can't be deleted so don't allow it to be set
 	if state.Spi == 0 {
 		return fmt.Errorf("Spi must be set when adding xfrm state.")
 	}
-	req := h.newNetlinkRequest(nlProto, syscall.NLM_F_CREATE|syscall.NLM_F_EXCL|syscall.NLM_F_ACK)
+	req := h.newNetlinkRequest(nlProto, unix.NLM_F_CREATE|unix.NLM_F_EXCL|unix.NLM_F_ACK)
 
-	msg := &nl.XfrmUsersaInfo{}
-	msg.Family = uint16(nl.GetIPFamily(state.Dst))
-	msg.Id.Daddr.FromIP(state.Dst)
-	msg.Saddr.FromIP(state.Src)
-	msg.Id.Proto = uint8(state.Proto)
-	msg.Mode = uint8(state.Mode)
-	msg.Id.Spi = nl.Swap32(uint32(state.Spi))
-	msg.Reqid = uint32(state.Reqid)
-	msg.ReplayWindow = uint8(state.ReplayWindow)
+	msg := xfrmUsersaInfoFromXfrmState(state)
+
+	if state.ESN {
+		if state.ReplayWindow == 0 {
+			return fmt.Errorf("ESN flag set without ReplayWindow")
+		}
+		msg.Flags |= nl.XFRM_STATE_ESN
+		msg.ReplayWindow = 0
+	}
+
 	limitsToLft(state.Limits, &msg.Lft)
 	req.AddData(msg)
 
@@ -129,9 +154,48 @@ func (h *Handle) xfrmStateAddOrUpdate(state *XfrmState, nlProto int) error {
 		out := nl.NewRtAttr(nl.XFRMA_MARK, writeMark(state.Mark))
 		req.AddData(out)
 	}
+	if state.ESN {
+		out := nl.NewRtAttr(nl.XFRMA_REPLAY_ESN_VAL, writeReplayEsn(state.ReplayWindow))
+		req.AddData(out)
+	}
+	if state.OutputMark != nil {
+		out := nl.NewRtAttr(nl.XFRMA_SET_MARK, nl.Uint32Attr(state.OutputMark.Value))
+		req.AddData(out)
+		if state.OutputMark.Mask != 0 {
+			out = nl.NewRtAttr(nl.XFRMA_SET_MARK_MASK, nl.Uint32Attr(state.OutputMark.Mask))
+			req.AddData(out)
+		}
+	}
 
-	_, err := req.Execute(syscall.NETLINK_XFRM, 0)
+	ifId := nl.NewRtAttr(nl.XFRMA_IF_ID, nl.Uint32Attr(uint32(state.Ifid)))
+	req.AddData(ifId)
+
+	_, err := req.Execute(unix.NETLINK_XFRM, 0)
 	return err
+}
+
+func (h *Handle) xfrmStateAllocSpi(state *XfrmState) (*XfrmState, error) {
+	req := h.newNetlinkRequest(nl.XFRM_MSG_ALLOCSPI,
+		unix.NLM_F_CREATE|unix.NLM_F_EXCL|unix.NLM_F_ACK)
+
+	msg := &nl.XfrmUserSpiInfo{}
+	msg.XfrmUsersaInfo = *(xfrmUsersaInfoFromXfrmState(state))
+	// 1-255 is reserved by IANA for future use
+	msg.Min = 0x100
+	msg.Max = 0xffffffff
+	req.AddData(msg)
+
+	if state.Mark != nil {
+		out := nl.NewRtAttr(nl.XFRMA_MARK, writeMark(state.Mark))
+		req.AddData(out)
+	}
+
+	msgs, err := req.Execute(unix.NETLINK_XFRM, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseXfrmState(msgs[0], FAMILY_ALL)
 }
 
 // XfrmStateDel will delete an xfrm state from the system. Note that
@@ -160,9 +224,9 @@ func XfrmStateList(family int) ([]XfrmState, error) {
 // Equivalent to: `ip xfrm state show`.
 // The list can be filtered by ip family.
 func (h *Handle) XfrmStateList(family int) ([]XfrmState, error) {
-	req := h.newNetlinkRequest(nl.XFRM_MSG_GETSA, syscall.NLM_F_DUMP)
+	req := h.newNetlinkRequest(nl.XFRM_MSG_GETSA, unix.NLM_F_DUMP)
 
-	msgs, err := req.Execute(syscall.NETLINK_XFRM, nl.XFRM_MSG_NEWSA)
+	msgs, err := req.Execute(unix.NETLINK_XFRM, nl.XFRM_MSG_NEWSA)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +263,7 @@ func (h *Handle) XfrmStateGet(state *XfrmState) (*XfrmState, error) {
 }
 
 func (h *Handle) xfrmStateGetOrDelete(state *XfrmState, nlProto int) (*XfrmState, error) {
-	req := h.newNetlinkRequest(nlProto, syscall.NLM_F_ACK)
+	req := h.newNetlinkRequest(nlProto, unix.NLM_F_ACK)
 
 	msg := &nl.XfrmUsersaId{}
 	msg.Family = uint16(nl.GetIPFamily(state.Dst))
@@ -217,12 +281,15 @@ func (h *Handle) xfrmStateGetOrDelete(state *XfrmState, nlProto int) (*XfrmState
 		req.AddData(out)
 	}
 
+	ifId := nl.NewRtAttr(nl.XFRMA_IF_ID, nl.Uint32Attr(uint32(state.Ifid)))
+	req.AddData(ifId)
+
 	resType := nl.XFRM_MSG_NEWSA
 	if nlProto == nl.XFRM_MSG_DELSA {
 		resType = 0
 	}
 
-	msgs, err := req.Execute(syscall.NETLINK_XFRM, uint16(resType))
+	msgs, err := req.Execute(unix.NETLINK_XFRM, uint16(resType))
 	if err != nil {
 		return nil, err
 	}
@@ -241,14 +308,7 @@ func (h *Handle) xfrmStateGetOrDelete(state *XfrmState, nlProto int) (*XfrmState
 
 var familyError = fmt.Errorf("family error")
 
-func parseXfrmState(m []byte, family int) (*XfrmState, error) {
-	msg := nl.DeserializeXfrmUsersaInfo(m)
-
-	// This is mainly for the state dump
-	if family != FAMILY_ALL && family != int(msg.Family) {
-		return nil, familyError
-	}
-
+func xfrmStateFromXfrmUsersaInfo(msg *nl.XfrmUsersaInfo) *XfrmState {
 	var state XfrmState
 
 	state.Dst = msg.Id.Daddr.ToIP()
@@ -259,6 +319,20 @@ func parseXfrmState(m []byte, family int) (*XfrmState, error) {
 	state.Reqid = int(msg.Reqid)
 	state.ReplayWindow = int(msg.ReplayWindow)
 	lftToLimits(&msg.Lft, &state.Limits)
+	curToStats(&msg.Curlft, &msg.Stats, &state.Statistics)
+
+	return &state
+}
+
+func parseXfrmState(m []byte, family int) (*XfrmState, error) {
+	msg := nl.DeserializeXfrmUsersaInfo(m)
+
+	// This is mainly for the state dump
+	if family != FAMILY_ALL && family != int(msg.Family) {
+		return nil, familyError
+	}
+
+	state := xfrmStateFromXfrmUsersaInfo(msg)
 
 	attrs, err := nl.ParseRouteAttr(m[nl.SizeofXfrmUsersaInfo:])
 	if err != nil {
@@ -307,10 +381,25 @@ func parseXfrmState(m []byte, family int) (*XfrmState, error) {
 			state.Mark = new(XfrmMark)
 			state.Mark.Value = mark.Value
 			state.Mark.Mask = mark.Mask
+		case nl.XFRMA_SET_MARK:
+			if state.OutputMark == nil {
+				state.OutputMark = new(XfrmMark)
+			}
+			state.OutputMark.Value = native.Uint32(attr.Value)
+		case nl.XFRMA_SET_MARK_MASK:
+			if state.OutputMark == nil {
+				state.OutputMark = new(XfrmMark)
+			}
+			state.OutputMark.Mask = native.Uint32(attr.Value)
+			if state.OutputMark.Mask == 0xffffffff {
+				state.OutputMark.Mask = 0
+			}
+		case nl.XFRMA_IF_ID:
+			state.Ifid = int(native.Uint32(attr.Value))
 		}
 	}
 
-	return &state, nil
+	return state, nil
 }
 
 // XfrmStateFlush will flush the xfrm state on the system.
@@ -324,16 +413,12 @@ func XfrmStateFlush(proto Proto) error {
 // proto = 0 means any transformation protocols
 // Equivalent to: `ip xfrm state flush [ proto XFRM-PROTO ]`
 func (h *Handle) XfrmStateFlush(proto Proto) error {
-	req := h.newNetlinkRequest(nl.XFRM_MSG_FLUSHSA, syscall.NLM_F_ACK)
+	req := h.newNetlinkRequest(nl.XFRM_MSG_FLUSHSA, unix.NLM_F_ACK)
 
 	req.AddData(&nl.XfrmUsersaFlush{Proto: uint8(proto)})
 
-	_, err := req.Execute(syscall.NETLINK_XFRM, 0)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	_, err := req.Execute(unix.NETLINK_XFRM, 0)
+	return err
 }
 
 func limitsToLft(lmts XfrmStateLimits, lft *nl.XfrmLifetimeCfg) {
@@ -365,4 +450,28 @@ func limitsToLft(lmts XfrmStateLimits, lft *nl.XfrmLifetimeCfg) {
 
 func lftToLimits(lft *nl.XfrmLifetimeCfg, lmts *XfrmStateLimits) {
 	*lmts = *(*XfrmStateLimits)(unsafe.Pointer(lft))
+}
+
+func curToStats(cur *nl.XfrmLifetimeCur, wstats *nl.XfrmStats, stats *XfrmStateStats) {
+	stats.Bytes = cur.Bytes
+	stats.Packets = cur.Packets
+	stats.AddTime = cur.AddTime
+	stats.UseTime = cur.UseTime
+	stats.ReplayWindow = wstats.ReplayWindow
+	stats.Replay = wstats.Replay
+	stats.Failed = wstats.IntegrityFailed
+}
+
+func xfrmUsersaInfoFromXfrmState(state *XfrmState) *nl.XfrmUsersaInfo {
+	msg := &nl.XfrmUsersaInfo{}
+	msg.Family = uint16(nl.GetIPFamily(state.Dst))
+	msg.Id.Daddr.FromIP(state.Dst)
+	msg.Saddr.FromIP(state.Src)
+	msg.Id.Proto = uint8(state.Proto)
+	msg.Mode = uint8(state.Mode)
+	msg.Id.Spi = nl.Swap32(uint32(state.Spi))
+	msg.Reqid = uint32(state.Reqid)
+	msg.ReplayWindow = uint8(state.ReplayWindow)
+
+	return msg
 }
