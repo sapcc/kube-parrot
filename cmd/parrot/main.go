@@ -24,7 +24,8 @@ var opts parrot.Options
 var neighbors Neighbors
 
 func init() {
-	flag.IntVar(&opts.As, "as", 65000, "global AS")
+	flag.IntVar(&opts.As, "as", 65000, "local BGP ASN")
+	flag.IntVar(&opts.RemoteAs, "remote-as", 0, "remote BGP ASN. Default to local ASN (iBGP)")
 	flag.StringVar(&opts.NodeName, "nodename", "", "Name of the node this pod is running on")
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
 	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
@@ -38,6 +39,10 @@ func main() {
 	goflag.CommandLine.Parse([]string{})
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 	flag.Parse()
+
+	if opts.RemoteAs == 0 {
+		opts.RemoteAs = opts.As
+	}
 
 	sigs := make(chan os.Signal, 1)
 	stop := make(chan struct{})

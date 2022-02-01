@@ -19,6 +19,7 @@ type Server struct {
 	grpc *api.Server
 
 	as           uint32
+	remoteAs     uint32
 	routerId     string
 	localAddress string
 
@@ -26,11 +27,12 @@ type Server struct {
 	NodePodSubnetRoutes *NodePodSubnetRoutesStore
 }
 
-func NewServer(localAddress *net.IP, as int, port int) *Server {
+func NewServer(localAddress *net.IP, as int, remoteAs int, port int) *Server {
 	server := &Server{
 		localAddress: localAddress.String(),
 		routerId:     localAddress.String(),
 		as:           uint32(as),
+		remoteAs:     uint32(remoteAs),
 	}
 
 	server.ExternalIPRoutes = newExternalIPRoutesStore(server)
@@ -77,11 +79,11 @@ func (s *Server) startServer() {
 }
 
 func (s *Server) AddNeighbor(neighbor string) {
-	glog.Infof("Adding Neighbor: %s", neighbor)
+	glog.Infof("Adding Neighbor: %s remote ASN %d", neighbor, s.remoteAs)
 	n := &config.Neighbor{
 		Config: config.NeighborConfig{
 			NeighborAddress: neighbor,
-			PeerAs:          s.as,
+			PeerAs:          s.remoteAs,
 		},
 	}
 

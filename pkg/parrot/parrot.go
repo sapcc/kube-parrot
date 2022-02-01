@@ -21,6 +21,7 @@ var (
 type Options struct {
 	GrpcPort      int
 	As            int
+	RemoteAs      int
 	NodeName      string
 	HostIP        net.IP
 	Neighbors     []*net.IP
@@ -44,7 +45,7 @@ type Parrot struct {
 func New(opts Options) *Parrot {
 	p := &Parrot{
 		Options: opts,
-		bgp:     bgp.NewServer(&opts.HostIP, opts.As, opts.GrpcPort),
+		bgp:     bgp.NewServer(&opts.HostIP, opts.As, opts.RemoteAs, opts.GrpcPort),
 		client:  NewClient(),
 	}
 
