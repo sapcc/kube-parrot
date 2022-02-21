@@ -117,7 +117,7 @@ func getNeighbors() []*net.IP {
 		neigh = append(neigh, &ip)
 	}
 	if len(neigh) != opts.NeighborCount {
-		glog.Fatalf("Discovered %d neighbors: %v, but was expecting %d neighbors. Exiting", len(neigh), neigh, opts.NeighborCount)
+		glog.Infof("Discovered %d neighbors: %v, but was expecting %d neighbors. Redundancy loss - expecting alert!", len(neigh), neigh, opts.NeighborCount)
 	}
 	return neigh
 }
