@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/golang/glog v1.0.0
-	github.com/juju/ratelimit v0.0.0-20151125201925-77ed1c8a0121
+	github.com/juju/ratelimit v1.0.2
 	github.com/osrg/gobgp v0.0.0-20180701120657-8e6bd4c7145d
 	github.com/prometheus/client_golang v0.9.3
 	github.com/sapcc/go-traceroute v0.0.0-20210130143923-d034613e85fc

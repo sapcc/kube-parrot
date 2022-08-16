@@ -103,7 +103,7 @@ github.com/josharian/intern
 # github.com/json-iterator/go v1.1.12
 ## explicit; go 1.12
 github.com/json-iterator/go
-# github.com/juju/ratelimit v0.0.0-20151125201925-77ed1c8a0121
+# github.com/juju/ratelimit v1.0.2
 ## explicit
 github.com/juju/ratelimit
 # github.com/kr/pretty v0.3.0
