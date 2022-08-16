@@ -53,8 +53,6 @@ github.com/gogo/protobuf/sortkeys
 # github.com/golang/glog v1.0.0
 ## explicit; go 1.11
 github.com/golang/glog
-# github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da
-## explicit
 # github.com/golang/protobuf v1.5.2
 ## explicit; go 1.9
 github.com/golang/protobuf/proto
@@ -79,10 +77,6 @@ github.com/google/go-cmp/cmp/internal/value
 # github.com/google/gofuzz v1.1.0
 ## explicit; go 1.12
 github.com/google/gofuzz
-# github.com/googleapis/gnostic v0.0.0-20170729233727-0c5108395e2d
-## explicit
-# github.com/hashicorp/golang-lru v0.5.1
-## explicit
 # github.com/hashicorp/hcl v1.0.0
 ## explicit
 github.com/hashicorp/hcl
@@ -109,8 +103,6 @@ github.com/json-iterator/go
 # github.com/juju/ratelimit v1.0.2
 ## explicit
 github.com/juju/ratelimit
-# github.com/kr/pretty v0.3.0
-## explicit; go 1.12
 # github.com/magiconair/properties v1.8.1
 ## explicit
 github.com/magiconair/properties
@@ -191,8 +183,6 @@ github.com/spf13/pflag
 # github.com/spf13/viper v1.7.1
 ## explicit; go 1.12
 github.com/spf13/viper
-# github.com/stretchr/testify v1.7.0
-## explicit; go 1.13
 # github.com/subosito/gotenv v1.2.0
 ## explicit
 github.com/subosito/gotenv
@@ -203,8 +193,6 @@ github.com/vishvananda/netlink/nl
 # github.com/vishvananda/netns v0.0.0-20200728191858-db3c7e526aae
 ## explicit; go 1.12
 github.com/vishvananda/netns
-# golang.org/x/crypto v0.0.0-20220214200702-86341886e292
-## explicit; go 1.17
 # golang.org/x/net v0.0.0-20220812174116-3211cb980234
 ## explicit; go 1.17
 golang.org/x/net/bpf
@@ -334,8 +322,6 @@ google.golang.org/protobuf/types/descriptorpb
 google.golang.org/protobuf/types/known/anypb
 google.golang.org/protobuf/types/known/durationpb
 google.golang.org/protobuf/types/known/timestamppb
-# gopkg.in/check.v1 v1.0.0-20200227125254-8fa46927fb4f
-## explicit
 # gopkg.in/inf.v0 v0.9.1
 ## explicit
 gopkg.in/inf.v0
@@ -556,8 +542,6 @@ k8s.io/client-go/util/connrotation
 k8s.io/client-go/util/flowcontrol
 k8s.io/client-go/util/keyutil
 k8s.io/client-go/util/workqueue
-# k8s.io/klog v0.3.1
-## explicit
 # k8s.io/klog/v2 v2.60.1
 ## explicit; go 1.13
 k8s.io/klog/v2
