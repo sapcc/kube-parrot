@@ -28,6 +28,9 @@ build: bin/linux/parrot
 push:
 	docker push $(PARROT_IMAGE)
 
+docker-push-mac: bin/linux/parrot
+	docker buildx build  --platform linux/amd64 . -t $(PARROT_IMAGE) --push
+
 clean:
 	rm -rf bin/*
 
