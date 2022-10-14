@@ -9,7 +9,7 @@ require (
 	github.com/prometheus/client_golang v1.13.0
 	github.com/sapcc/go-traceroute v0.0.0-20210130143923-d034613e85fc
 	github.com/spf13/pflag v1.0.5
-	golang.org/x/net v0.0.0-20220812174116-3211cb980234
+	golang.org/x/net v0.0.0-20221014081412-f15817d10f9b
 	k8s.io/api v0.24.3
 	k8s.io/apimachinery v0.24.3
 	k8s.io/client-go v0.24.3
