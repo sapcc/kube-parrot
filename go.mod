@@ -10,9 +10,9 @@ require (
 	github.com/sapcc/go-traceroute v0.0.0-20210130143923-d034613e85fc
 	github.com/spf13/pflag v1.0.5
 	golang.org/x/net v0.0.0-20220812174116-3211cb980234
-	k8s.io/api v0.24.3
-	k8s.io/apimachinery v0.24.3
-	k8s.io/client-go v0.24.3
+	k8s.io/api v0.29.3
+	k8s.io/apimachinery v0.29.3
+	k8s.io/client-go v0.29.3
 )
 
 require (
