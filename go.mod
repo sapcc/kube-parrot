@@ -3,7 +3,7 @@ module github.com/sapcc/kube-parrot
 go 1.19
 
 require (
-	github.com/golang/glog v1.0.0
+	github.com/golang/glog v1.2.1
 	github.com/juju/ratelimit v1.0.2
 	github.com/osrg/gobgp v0.0.0-20180701120657-8e6bd4c7145d
 	github.com/prometheus/client_golang v1.13.0
@@ -35,7 +35,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/google/gnostic v0.5.7-v3refs // indirect
-	github.com/google/go-cmp v0.5.8 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.1.0 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/influxdata/influxdb v0.0.0-20161010190917-31169512f436 // indirect
