@@ -20,7 +20,7 @@ import (
 	"sort"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/clock"
+	"k8s.io/utils/clock"
 )
 
 // DelayingInterface is an Interface that can Add an item at a later time.  This makes it easier to
@@ -44,7 +44,7 @@ func newDelayingQueue(clock clock.Clock, name string) DelayingInterface {
 	ret := &delayingType{
 		Interface:          NewNamed(name),
 		clock:              clock,
-		heartbeat:          clock.NewTicker(maxWait).C(),
+		heartbeat:          clock.Tick(maxWait),
 		stopCh:             make(chan struct{}),
 		waitingTimeByEntry: map[t]time.Time{},
 		waitingForAddCh:    make(chan waitFor, 1000),

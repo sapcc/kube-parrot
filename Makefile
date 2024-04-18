@@ -20,7 +20,7 @@ export PARROT_IMAGE := $(IMAGE):$(VERSION)
 all: bin/$(GOOS)/parrot
 
 bin/%/parrot: $(GOFILES) Makefile
-	GOOS=$* GOARCH=amd64 go build $(GOFLAGS) -v -i -o bin/$*/parrot ./cmd/parrot
+	GOOS=$* GOARCH=amd64 go build $(GOFLAGS) -v -o bin/$*/parrot ./cmd/parrot
 
 build: bin/linux/parrot
 	docker build -t $(PARROT_IMAGE) .
@@ -28,8 +28,8 @@ build: bin/linux/parrot
 push:
 	docker push $(PARROT_IMAGE)
 
-docker-push-mac: bin/linux/parrot
-	docker buildx build  --platform linux/amd64 . -t $(PARROT_IMAGE) --push
+buildx: bin/linux/parrot
+	docker buildx build --provenance=false  --platform linux/amd64 . -t $(PARROT_IMAGE) --push
 
 clean:
 	rm -rf bin/*
