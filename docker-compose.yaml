@@ -47,7 +47,7 @@ services:
   k3s:
     container_name: k3s
     hostname: k3s
-    image: rancher/k3s:v1.24.1-rc2-k3s1
+    image: rancher/k3s:v1.31.1-rc2-k3s1
     command: server --node-ip 10.0.0.10 --flannel-iface eth1
     networks:
       net1: null
