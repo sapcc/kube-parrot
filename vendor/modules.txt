@@ -233,8 +233,6 @@ golang.org/x/text/unicode/norm
 # golang.org/x/time v0.3.0
 ## explicit
 golang.org/x/time/rate
-# google.golang.org/appengine v1.6.7
-## explicit; go 1.11
 # google.golang.org/genproto v0.0.0-20210402141018-6c239bbf2bb1
 ## explicit; go 1.11
 google.golang.org/genproto/googleapis/rpc/status
