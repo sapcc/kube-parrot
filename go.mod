@@ -6,7 +6,7 @@ require (
 	github.com/golang/glog v1.2.2
 	github.com/juju/ratelimit v1.0.2
 	github.com/osrg/gobgp v0.0.0-20180701120657-8e6bd4c7145d
-	github.com/prometheus/client_golang v1.20.4
+	github.com/prometheus/client_golang v1.20.5
 	github.com/sapcc/go-traceroute v0.0.0-20210130143923-d034613e85fc
 	github.com/spf13/pflag v1.0.5
 	golang.org/x/net v0.29.0
