@@ -1,0 +1,40 @@
+# Configuration file for <https://github.com/sapcc/go-makefile-maker>
+
+metadata:
+  url: https://github.com/sapcc/kube-parrot
+
+dockerfile:
+  enabled: false
+
+golang:
+  enableVendoring: false
+  setGoModVersion: true
+
+golangciLint:
+  createConfig: true
+
+githubWorkflow:
+  ci:
+    enabled: true
+    coveralls: true
+    ignorePaths:
+      - "**.md" # all Markdown files
+  license:
+    enabled: true
+  securityChecks:
+    enabled: true
+  pushContainerToGhcr:
+    enabled: true
+    platforms: "linux/amd64"
+    tagStrategy:
+      - edge
+      - latest
+      - semver
+
+renovate:
+  enabled: true
+  assignees:
+    - defo89
+    - SchwarzM
+    - xsen84
+    - goerangudat
