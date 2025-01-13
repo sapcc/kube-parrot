@@ -7,12 +7,12 @@ WORKDIR /workspace
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
-COPY vendor vendor 
+COPY vendor/ vendor/ 
 
 RUN go mod download
 
 # Copy the go source
-COPY cmd cmd
+COPY cmd/ cmd/
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
