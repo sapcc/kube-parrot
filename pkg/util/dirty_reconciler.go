@@ -1,4 +1,4 @@
-package util 
+package util
 
 import "github.com/sapcc/kube-parrot/pkg/forked/workqueue"
 

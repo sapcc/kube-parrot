@@ -1,10 +1,12 @@
 package metrics
 
 import (
+	"net"
+
 	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/sapcc/kube-parrot/pkg/bgp"
-	"net"
 )
 
 var sessionStati = []string{"idle", "connect", "active", "opensent", "openconfirm", "established"}
@@ -93,7 +95,6 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 				c.nodeName,
 				neighbor.String(),
 			)
-
 		}
 	}
 }
