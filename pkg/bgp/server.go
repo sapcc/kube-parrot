@@ -1,3 +1,6 @@
+// Copyright 2025 SAP SE
+// SPDX-License-Identifier: Apache-2.0
+
 package bgp
 
 import (
@@ -12,6 +15,7 @@ import (
 	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/config"
 	gobgp "github.com/osrg/gobgp/server"
+	"github.com/sapcc/go-bits/must"
 )
 
 type Server struct {
@@ -20,19 +24,19 @@ type Server struct {
 
 	as           uint32
 	remoteAs     uint32
-	routerId     string
+	routerID     string
 	localAddress string
 
 	ExternalIPRoutes    *ExternalIPRoutesStore
 	NodePodSubnetRoutes *NodePodSubnetRoutesStore
 }
 
-func NewServer(localAddress *net.IP, as int, remoteAs int, port int) *Server {
+func NewServer(localAddress *net.IP, as, remoteAs uint32, port int) *Server {
 	server := &Server{
 		localAddress: localAddress.String(),
-		routerId:     localAddress.String(),
-		as:           uint32(as),
-		remoteAs:     uint32(remoteAs),
+		routerID:     localAddress.String(),
+		as:           as,
+		remoteAs:     remoteAs,
 	}
 
 	server.ExternalIPRoutes = newExternalIPRoutesStore(server)
@@ -54,13 +58,13 @@ func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	// logrus.SetLevel(logrus.DebugLevel)
 
 	go s.bgp.Serve()
-	go s.grpc.Serve()
+	go must.Succeed(s.grpc.Serve())
 
 	time.Sleep(1 * time.Second)
 	s.startServer()
 
 	<-stopCh
-	s.bgp.Stop()
+	must.Succeed(s.bgp.Stop())
 	time.Sleep(1 * time.Second)
 }
 
@@ -68,7 +72,7 @@ func (s *Server) startServer() {
 	global := &config.Global{
 		Config: config.GlobalConfig{
 			As:       s.as,
-			RouterId: s.routerId,
+			RouterId: s.routerID,
 			Port:     -1,
 		},
 	}

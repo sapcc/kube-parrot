@@ -1,4 +1,7 @@
-package util 
+// Copyright 2025 SAP SE
+// SPDX-License-Identifier: Apache-2.0
+
+package util
 
 import "github.com/sapcc/kube-parrot/pkg/forked/workqueue"
 

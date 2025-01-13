@@ -1,3 +1,6 @@
+// Copyright 2025 SAP SE
+// SPDX-License-Identifier: Apache-2.0
+
 package bgp
 
 import (
@@ -47,7 +50,7 @@ type ExternalIPRoute struct {
 	HostIP  *net.IP
 }
 
-func (r ExternalIPRoute) Source() (*net.IP, uint8) {
+func (r ExternalIPRoute) Source() (*net.IP, uint8) { //nolint:gocritic
 	ip := net.ParseIP(r.Service.Spec.ExternalIPs[0])
 	return &ip, uint8(32)
 }
@@ -73,7 +76,7 @@ func NewNodePodSubnetRoute(node *v1.Node) RouteInterface {
 	return NodePodSubnetRoute{Route{}, node}
 }
 
-func (r NodePodSubnetRoute) Source() (*net.IP, uint8) {
+func (r NodePodSubnetRoute) Source() (*net.IP, uint8) { //nolint:gocritic
 	subnet, err := util.GetNodePodSubnet(r.Node)
 	if err != nil {
 		return nil, 0
@@ -83,7 +86,7 @@ func (r NodePodSubnetRoute) Source() (*net.IP, uint8) {
 		return nil, 0
 	}
 	prefixSize, _ := ipnet.Mask.Size()
-	return &ip, uint8(prefixSize)
+	return &ip, uint8(prefixSize) //nolint:gosec
 }
 
 func (r NodePodSubnetRoute) NextHop() *net.IP {

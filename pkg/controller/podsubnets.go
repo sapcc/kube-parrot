@@ -1,3 +1,6 @@
+// Copyright 2025 SAP SE
+// SPDX-License-Identifier: Apache-2.0
+
 package controller
 
 import (
@@ -8,16 +11,16 @@ import (
 	"k8s.io/client-go/tools/cache"
 
 	"github.com/golang/glog"
+
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
 	"github.com/sapcc/kube-parrot/pkg/util"
-	reconciler "github.com/sapcc/kube-parrot/pkg/util"
 )
 
 type PodSubnetsController struct {
 	routes     *bgp.NodePodSubnetRoutesStore
 	nodes      cache.Store
-	reconciler reconciler.DirtyReconcilerInterface
+	reconciler util.DirtyReconcilerInterface
 	hostIP     *net.IP
 }
 
@@ -30,15 +33,18 @@ func NewPodSubnetsController(informers informer.SharedInformerFactory, hostIP *n
 		hostIP: hostIP,
 	}
 
-	n.reconciler = reconciler.NewNamedDirtyReconciler("podsubnets", n.reconcile)
+	n.reconciler = util.NewNamedDirtyReconciler("podsubnets", n.reconcile)
 
-	informers.Nodes().Informer().AddEventHandler(
+	_, err := informers.Nodes().Informer().AddEventHandler(
 		cache.ResourceEventHandlerFuncs{
 			AddFunc:    n.nodeAdd,
 			UpdateFunc: n.nodeUpdate,
 			DeleteFunc: n.nodeDelete,
 		},
 	)
+	if err != nil {
+		glog.V(3).Infof("adding node event handler failed (%w), continuing anyway", err)
+	}
 
 	return n
 }
@@ -65,17 +71,31 @@ func (c *PodSubnetsController) nodeAdd(obj interface{}) {
 	}
 
 	if _, err := util.GetNodePodSubnet(node); err != nil {
-		if _, exists, _ := c.nodes.Get(node); exists {
+		_, exists, err := c.nodes.Get(node)
+		if err != nil {
+			glog.V(3).Infof("getting nodes failed (%w), continuing anyway", err)
+		}
+		if exists {
 			glog.V(3).Infof("Deleting Node (%s)", node.Name)
-			c.nodes.Delete(node)
+			err = c.nodes.Delete(node)
+			if err != nil {
+				glog.V(3).Infof("deleting node %s failed (%w), continuing anyway", node.Name, err)
+			}
 			c.reconciler.Dirty()
 		}
 		return
 	}
 
-	if _, exists, _ := c.nodes.Get(node); !exists {
+	_, exists, err := c.nodes.Get(node)
+	if err != nil {
+		glog.V(3).Infof("getting nodes failed (%w), continuing anyway", err)
+	}
+	if !exists {
 		glog.V(3).Infof("Adding Node (%s)", node.Name)
-		c.nodes.Add(node)
+		err = c.nodes.Add(node)
+		if err != nil {
+			glog.V(3).Infof("adding node %s failed (%w), continuing anyway", node.Name, err)
+		}
 		c.reconciler.Dirty()
 	}
 }
@@ -86,15 +106,26 @@ func (c *PodSubnetsController) nodeUpdate(old, cur interface{}) {
 
 func (c *PodSubnetsController) nodeDelete(obj interface{}) {
 	node := obj.(*v1.Node)
-	if _, exists, _ := c.nodes.Get(node); exists {
-		c.nodes.Delete(node)
+	_, exists, err := c.nodes.Get(node)
+	if err != nil {
+		glog.V(3).Infof("getting nodes failed (%w), continuing anyway", err)
+	}
+	if exists {
+		err := c.nodes.Delete(node)
+		if err != nil {
+			glog.V(3).Infof("deleting node %s failed (%w), continuing anyway", node.Name, err)
+		}
 		c.reconciler.Dirty()
 	}
 }
 
 func (c *PodSubnetsController) reconcile() error {
 	for _, route := range c.routes.List() {
-		if _, ok, _ := c.nodes.Get(route.Node); !ok {
+		_, ok, err := c.nodes.Get(route.Node)
+		if err != nil {
+			glog.V(3).Infof("getting nodes failed (%w), continuing anyway", err)
+		}
+		if !ok {
 			if err := c.routes.Delete(route); err != nil {
 				return err
 			}

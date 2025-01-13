@@ -1,3 +1,6 @@
+// Copyright 2025 SAP SE
+// SPDX-License-Identifier: Apache-2.0
+
 package bgp
 
 import (
@@ -41,11 +44,15 @@ func newNodePodSubnetRoutesStore(bgp *Server) *NodePodSubnetRoutesStore {
 }
 
 func (s *RoutesStore) Add(route RouteInterface) error {
-	if _, exists, _ := s.Store.Get(route); !exists {
+	_, exists, err := s.Store.Get(route)
+	if err != nil {
+		glog.V(3).Infof("getting route failed (%w), continuing anyway", err)
+	}
+	if !exists {
 		glog.Infof("Announcing  %s\n", Route{route})
 
 		if _, err := s.server.bgp.AddPath("", []*table.Path{Route{route}.Path(false)}); err != nil {
-			return fmt.Errorf("Oops. Something went wrong adding path: %s", err)
+			return fmt.Errorf("oops. Something went wrong adding path: %w", err)
 		}
 
 		return s.Store.Add(route)
@@ -55,11 +62,15 @@ func (s *RoutesStore) Add(route RouteInterface) error {
 }
 
 func (s *RoutesStore) Delete(route RouteInterface) error {
-	if _, exists, _ := s.Store.Get(route); exists {
+	_, exists, err := s.Store.Get(route)
+	if err != nil {
+		glog.V(3).Infof("getting route failed (%w), continuing anyway", err)
+	}
+	if exists {
 		glog.Infof("Withdrawing %s\n", Route{route})
 
 		if err := s.server.bgp.DeletePath(nil, bgp.RF_IPv4_UC, "", []*table.Path{Route{route}.Path(true)}); err != nil {
-			return fmt.Errorf("Oops. Something went wrong deleting route: %s", err)
+			return fmt.Errorf("oops. Something went wrong deleting route: %w", err)
 		}
 
 		return s.Store.Delete(route)
