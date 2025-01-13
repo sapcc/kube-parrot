@@ -48,18 +48,18 @@ func (s *sharedInformerFactory) Start(stopCh <-chan struct{}) {
 	}
 }
 
-func (f *sharedInformerFactory) Pods() PodInformer {
-	return &podInformer{sharedInformerFactory: f}
+func (s *sharedInformerFactory) Pods() PodInformer {
+	return &podInformer{sharedInformerFactory: s}
 }
 
-func (f *sharedInformerFactory) Services() ServiceInformer {
-	return &serviceInformer{sharedInformerFactory: f}
+func (s *sharedInformerFactory) Services() ServiceInformer {
+	return &serviceInformer{sharedInformerFactory: s}
 }
 
-func (f *sharedInformerFactory) Nodes() NodeInformer {
-	return &nodeInformer{sharedInformerFactory: f}
+func (s *sharedInformerFactory) Nodes() NodeInformer {
+	return &nodeInformer{sharedInformerFactory: s}
 }
 
-func (f *sharedInformerFactory) Endpoints() EndpointInformer {
-	return &endpointInformer{sharedInformerFactory: f}
+func (s *sharedInformerFactory) Endpoints() EndpointInformer {
+	return &endpointInformer{sharedInformerFactory: s}
 }

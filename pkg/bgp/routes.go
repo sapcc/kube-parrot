@@ -12,8 +12,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 )
 
-
-
 type RouteInterface interface {
 	Source() (*net.IP, uint8)
 	NextHop() *net.IP
@@ -76,14 +74,23 @@ func NewNodePodSubnetRoute(node *v1.Node) RouteInterface {
 }
 
 func (r NodePodSubnetRoute) Source() (*net.IP, uint8) {
-	subnet, _ := util.GetNodePodSubnet(r.Node)
-	ip, ipnet, _ := net.ParseCIDR(subnet)
+	subnet, err := util.GetNodePodSubnet(r.Node)
+	if err != nil {
+		return nil, 0
+	}
+	ip, ipnet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return nil, 0
+	}
 	prefixSize, _ := ipnet.Mask.Size()
 	return &ip, uint8(prefixSize)
 }
 
 func (r NodePodSubnetRoute) NextHop() *net.IP {
-	nexthop, _ := util.GetNodeInternalIP(r.Node)
+	nexthop, err := util.GetNodeInternalIP(r.Node)
+	if err != nil {
+		return nil
+	}
 	ip := net.ParseIP(nexthop)
 	return &ip
 }

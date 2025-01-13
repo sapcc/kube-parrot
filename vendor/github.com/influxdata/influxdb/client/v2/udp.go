@@ -13,7 +13,7 @@ const (
 	UDPPayloadSize = 512
 )
 
-// UDPConfig is the config data needed to create a UDP Client
+// UDPConfig is the config data needed to create a UDP Client.
 type UDPConfig struct {
 	// Addr should be of the form "host:port"
 	// or "[ipv6-host%zone]:port".
@@ -104,6 +104,10 @@ func (uc *udpclient) Write(bp BatchPoints) error {
 }
 
 func (uc *udpclient) Query(q Query) (*Response, error) {
+	return nil, fmt.Errorf("Querying via UDP is not supported")
+}
+
+func (uc *udpclient) QueryAsChunk(q Query) (*ChunkedResponse, error) {
 	return nil, fmt.Errorf("Querying via UDP is not supported")
 }
 

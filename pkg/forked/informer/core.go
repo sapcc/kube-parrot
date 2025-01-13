@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/kubernetes"
 	informers_v1 "k8s.io/client-go/informers/core/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 )
 
 // PodInformer is type of SharedIndexInformer which watches and lists all pods.

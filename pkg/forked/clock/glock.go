@@ -148,7 +148,6 @@ func (f *FakeClock) setTimeLocked(t time.Time) {
 	for i := range f.waiters {
 		w := &f.waiters[i]
 		if !w.targetTime.After(t) {
-
 			if w.skipIfBlocked {
 				select {
 				case w.destChan <- t:
@@ -164,7 +163,6 @@ func (f *FakeClock) setTimeLocked(t time.Time) {
 				}
 				newWaiters = append(newWaiters, *w)
 			}
-
 		} else {
 			newWaiters = append(newWaiters, f.waiters[i])
 		}
