@@ -30,6 +30,7 @@ githubWorkflow:
       - edge
       - latest
       - semver
+      - sha
 
 renovate:
   enabled: true

@@ -42,6 +42,8 @@ jobs:
             type=semver,pattern={{raw}}
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
+            # https://github.com/docker/metadata-action#typesha
+            type=sha,format=long
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
