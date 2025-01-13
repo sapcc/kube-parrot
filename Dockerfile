@@ -8,6 +8,7 @@ WORKDIR /workspace
 COPY go.mod go.mod
 COPY go.sum go.sum
 COPY vendor/ vendor/ 
+COPY pkg/ pkg/ 
 
 RUN go mod download
 
