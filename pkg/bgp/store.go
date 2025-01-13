@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"net"
 
+	"strconv"
+
 	"github.com/golang/glog"
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/table"
-
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
@@ -28,7 +29,7 @@ type NodePodSubnetRoutesStore struct {
 func RouteKeyFunc(obj interface{}) (string, error) {
 	route := obj.(RouteInterface)
 	prefix, length := route.Source()
-	return fmt.Sprintf("%s/%s->%s", prefix, length, route.NextHop().To4().String()), nil
+	return fmt.Sprintf("%s/%s->%s", prefix, strconv.Itoa(int(length)), route.NextHop().To4().String()), nil
 }
 
 func newExternalIPRoutesStore(bgp *Server) *ExternalIPRoutesStore {
