@@ -74,7 +74,7 @@ type ItemExponentialFailureRateLimiter struct {
 
 var _ RateLimiter = &ItemExponentialFailureRateLimiter{}
 
-func NewItemExponentialFailureRateLimiter(baseDelay, maxDelay time.Duration) RateLimiter {
+func NewItemExponentialFailureRateLimiter(baseDelay time.Duration, maxDelay time.Duration) RateLimiter {
 	return &ItemExponentialFailureRateLimiter{
 		failures:  map[interface{}]int{},
 		baseDelay: baseDelay,
@@ -91,7 +91,7 @@ func (r *ItemExponentialFailureRateLimiter) When(item interface{}) time.Duration
 	defer r.failuresLock.Unlock()
 
 	exp := r.failures[item]
-	r.failures[item]++
+	r.failures[item] = r.failures[item] + 1
 
 	// The backoff is capped such that 'calculated' value never overflows.
 	backoff := float64(r.baseDelay.Nanoseconds()) * math.Pow(2, float64(exp))
@@ -146,7 +146,7 @@ func (r *ItemFastSlowRateLimiter) When(item interface{}) time.Duration {
 	r.failuresLock.Lock()
 	defer r.failuresLock.Unlock()
 
-	r.failures[item]++
+	r.failures[item] = r.failures[item] + 1
 
 	if r.failures[item] <= r.maxFastAttempts {
 		return r.fastDelay

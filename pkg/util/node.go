@@ -4,8 +4,8 @@
 package util
 
 import (
-	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 
 	utiljson "encoding/json"
@@ -33,7 +33,7 @@ func GetNodeInternalIP(node *v1.Node) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("node must have an InternalIP: %s", node.Name)
+	return "", fmt.Errorf("Node must have an InternalIP: %s", node.Name)
 }
 
 func GetNodePodSubnet(node *v1.Node) (string, error) {
@@ -53,7 +53,7 @@ func GetNodePodSubnet(node *v1.Node) (string, error) {
 		return l, nil
 	}
 
-	return "", errors.New("couldn't figure out nodes PodCIDR, set an annotation or configfile")
+	return "", fmt.Errorf("Couldn't figure out nodes PodCIDR. Set annotation or configfile.")
 }
 
 func loadConfig() (*Config, error) {
@@ -64,18 +64,18 @@ func loadConfig() (*Config, error) {
 	}
 	glog.V(2).Infof("config file found at %q", ConfigPath)
 
-	yaml, err := os.ReadFile(ConfigPath)
+	yaml, err := ioutil.ReadFile(ConfigPath)
 	if err != nil {
-		return c, fmt.Errorf("couldn't read config file %q: %w", ConfigPath, err)
+		return c, fmt.Errorf("couldn't read config file %q: %s", ConfigPath, err)
 	}
 
 	json, err := utilyaml.ToJSON(yaml)
 	if err != nil {
-		return c, fmt.Errorf("couldn't parse config file %q: %w", ConfigPath, err)
+		return c, fmt.Errorf("couldn't parse config file %q: %s", ConfigPath, err)
 	}
 
 	if err = utiljson.Unmarshal(json, c); err != nil {
-		return c, fmt.Errorf("couldn't unmarshal config file %q: %w", ConfigPath, err)
+		return c, fmt.Errorf("couldn't unmarshal config file %q: %s", ConfigPath, err)
 	}
 
 	return c, nil

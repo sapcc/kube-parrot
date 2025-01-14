@@ -29,6 +29,5 @@ LABEL source_repository="https://github.com/sapcc/kube-parrot"
 
 WORKDIR /
 COPY --from=builder /workspace/parrot .
-USER 65532:65532
 
 ENTRYPOINT ["/parrot"]

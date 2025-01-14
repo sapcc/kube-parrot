@@ -9,13 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/cache"
-
 	"github.com/sapcc/kube-parrot/pkg/bgp"
 	"github.com/sapcc/kube-parrot/pkg/controller"
 	"github.com/sapcc/kube-parrot/pkg/forked/informer"
 	"github.com/sapcc/kube-parrot/pkg/metrics"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 )
 
 var (
@@ -24,8 +23,8 @@ var (
 
 type Options struct {
 	GrpcPort      int
-	As            uint32
-	RemoteAs      uint32
+	As            int
+	RemoteAs      int
 	NodeName      string
 	HostIP        net.IP
 	Neighbors     []*net.IP
@@ -41,9 +40,9 @@ type Parrot struct {
 	client *kubernetes.Clientset
 	bgp    *bgp.Server
 
-	informers        informer.SharedInformerFactory
-	externalServices *controller.ExternalServicesController
-	podSubnets       *controller.PodSubnetsController
+	informers       informer.SharedInformerFactory
+	externalSevices *controller.ExternalServicesController
+	podSubnets      *controller.PodSubnetsController
 }
 
 func New(opts Options) *Parrot {
@@ -57,7 +56,7 @@ func New(opts Options) *Parrot {
 	metrics.RegisterCollector(p.NodeName, opts.Neighbors, p.bgp)
 
 	p.informers = informer.NewSharedInformerFactory(p.client, 5*time.Minute)
-	p.externalServices = controller.NewExternalServicesController(p.informers, &opts.HostIP, opts.NodeName, p.bgp.ExternalIPRoutes)
+	p.externalSevices = controller.NewExternalServicesController(p.informers, &opts.HostIP, opts.NodeName, p.bgp.ExternalIPRoutes)
 	p.podSubnets = controller.NewPodSubnetsController(p.informers, &opts.HostIP, p.bgp.NodePodSubnetRoutes)
 
 	return p
@@ -83,7 +82,7 @@ func (p *Parrot) Run(opts Options, stopCh <-chan struct{}, wg *sync.WaitGroup) {
 		p.informers.Services().Informer().HasSynced,
 	)
 
-	go p.externalServices.Run(stopCh, wg)
+	go p.externalSevices.Run(stopCh, wg)
 	if opts.PodSubnet {
 		go p.podSubnets.Run(stopCh, wg)
 	}

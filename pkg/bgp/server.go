@@ -15,7 +15,6 @@ import (
 	api "github.com/osrg/gobgp/api"
 	"github.com/osrg/gobgp/config"
 	gobgp "github.com/osrg/gobgp/server"
-	"github.com/sapcc/go-bits/must"
 )
 
 type Server struct {
@@ -24,19 +23,19 @@ type Server struct {
 
 	as           uint32
 	remoteAs     uint32
-	routerID     string
+	routerId     string
 	localAddress string
 
 	ExternalIPRoutes    *ExternalIPRoutesStore
 	NodePodSubnetRoutes *NodePodSubnetRoutesStore
 }
 
-func NewServer(localAddress *net.IP, as, remoteAs uint32, port int) *Server {
+func NewServer(localAddress *net.IP, as int, remoteAs int, port int) *Server {
 	server := &Server{
 		localAddress: localAddress.String(),
-		routerID:     localAddress.String(),
-		as:           as,
-		remoteAs:     remoteAs,
+		routerId:     localAddress.String(),
+		as:           uint32(as),
+		remoteAs:     uint32(remoteAs),
 	}
 
 	server.ExternalIPRoutes = newExternalIPRoutesStore(server)
@@ -58,13 +57,13 @@ func (s *Server) Run(stopCh <-chan struct{}, wg *sync.WaitGroup) {
 	// logrus.SetLevel(logrus.DebugLevel)
 
 	go s.bgp.Serve()
-	go must.Succeed(s.grpc.Serve())
+	go s.grpc.Serve()
 
 	time.Sleep(1 * time.Second)
 	s.startServer()
 
 	<-stopCh
-	must.Succeed(s.bgp.Stop())
+	s.bgp.Stop()
 	time.Sleep(1 * time.Second)
 }
 
@@ -72,7 +71,7 @@ func (s *Server) startServer() {
 	global := &config.Global{
 		Config: config.GlobalConfig{
 			As:       s.as,
-			RouterId: s.routerID,
+			RouterId: s.routerId,
 			Port:     -1,
 		},
 	}

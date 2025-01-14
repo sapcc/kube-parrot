@@ -3,7 +3,7 @@
 
 package util
 
-import v1 "k8s.io/api/core/v1"
+import "k8s.io/api/core/v1"
 
 func IsPodReady(pod *v1.Pod) bool {
 	return IsPodReadyConditionTrue(pod.Status)

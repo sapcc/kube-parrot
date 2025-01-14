@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/sapcc/go-bits/must"
 )
 
 type queueMetrics interface {
@@ -40,7 +39,7 @@ type defaultQueueMetrics struct {
 
 func newQueueMetrics(name string) queueMetrics {
 	var ret *defaultQueueMetrics
-	if name == "" {
+	if len(name) == 0 {
 		return ret
 	}
 
@@ -69,10 +68,10 @@ func newQueueMetrics(name string) queueMetrics {
 		processingStartTimes: map[t]time.Time{},
 	}
 
-	must.Succeed(prometheus.Register(ret.depth))
-	must.Succeed(prometheus.Register(ret.adds))
-	must.Succeed(prometheus.Register(ret.latency))
-	must.Succeed(prometheus.Register(ret.workDuration))
+	prometheus.Register(ret.depth)
+	prometheus.Register(ret.adds)
+	prometheus.Register(ret.latency)
+	prometheus.Register(ret.workDuration)
 
 	return ret
 }
@@ -128,7 +127,7 @@ type defaultRetryMetrics struct {
 
 func newRetryMetrics(name string) retryMetrics {
 	var ret *defaultRetryMetrics
-	if name == "" {
+	if len(name) == 0 {
 		return ret
 	}
 
@@ -140,7 +139,7 @@ func newRetryMetrics(name string) retryMetrics {
 		}),
 	}
 
-	must.Succeed(prometheus.Register(ret.retries))
+	prometheus.Register(ret.retries)
 
 	return ret
 }
