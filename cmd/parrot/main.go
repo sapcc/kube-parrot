@@ -14,13 +14,11 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"github.com/sapcc/go-bits/must"
 	"github.com/sapcc/go-traceroute/traceroute"
-	flag "github.com/spf13/pflag"
-	"golang.org/x/net/context"
-
 	"github.com/sapcc/kube-parrot/pkg/metrics"
 	"github.com/sapcc/kube-parrot/pkg/parrot"
+	flag "github.com/spf13/pflag"
+	"golang.org/x/net/context"
 )
 
 type Neighbors []*net.IP
@@ -29,8 +27,8 @@ var opts parrot.Options
 var neighbors Neighbors
 
 func init() {
-	flag.Uint32Var(&opts.As, "as", 65000, "local BGP ASN")
-	flag.Uint32Var(&opts.RemoteAs, "remote-as", 0, "remote BGP ASN. Default to local ASN (iBGP)")
+	flag.IntVar(&opts.As, "as", 65000, "local BGP ASN")
+	flag.IntVar(&opts.RemoteAs, "remote-as", 0, "remote BGP ASN. Default to local ASN (iBGP)")
 	flag.StringVar(&opts.NodeName, "nodename", "", "Name of the node this pod is running on")
 	flag.IPVar(&opts.HostIP, "hostip", net.ParseIP("127.0.0.1"), "IP")
 	flag.IntVar(&opts.MetricsPort, "metric-port", 30039, "Port for Prometheus metrics")
@@ -41,7 +39,7 @@ func init() {
 }
 
 func main() {
-	must.Succeed(goflag.CommandLine.Parse([]string{}))
+	goflag.CommandLine.Parse([]string{})
 	flag.CommandLine.AddGoFlagSet(goflag.CommandLine)
 	flag.Parse()
 
@@ -73,21 +71,21 @@ func main() {
 	glog.V(2).Infof("Shutdown Completed. Bye!")
 }
 
-func (n *Neighbors) String() string {
-	return fmt.Sprintf("%v", *n)
+func (f *Neighbors) String() string {
+	return fmt.Sprintf("%v", *f)
 }
 
-func (n *Neighbors) Set(value string) error {
+func (i *Neighbors) Set(value string) error {
 	ip := net.ParseIP(value)
 	if ip == nil {
 		return fmt.Errorf("%v is not a valid IP address", value)
 	}
 
-	*n = append(*n, &ip)
+	*i = append(*i, &ip)
 	return nil
 }
 
-func (n *Neighbors) Type() string {
+func (s *Neighbors) Type() string {
 	return "neighborSlice"
 }
 
@@ -105,9 +103,10 @@ func getNeighbors() []*net.IP {
 	defer t.Close()
 
 	h := make(map[string]struct{})
-	for i := range opts.TraceCount {
+	for i := 0; i < opts.TraceCount; i++ {
 		dst := fmt.Sprintf("1.1.1.%v", i)
 		err := t.Trace(context.Background(), net.ParseIP(dst), func(reply *traceroute.Reply) {
+
 			h[reply.IP.String()] = struct{}{}
 		})
 		if err != nil {
@@ -116,7 +115,7 @@ func getNeighbors() []*net.IP {
 	}
 
 	var neigh []*net.IP
-	for k := range h {
+	for k, _ := range h {
 		ip := net.ParseIP(k)
 		neigh = append(neigh, &ip)
 	}
