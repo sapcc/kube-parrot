@@ -3,7 +3,7 @@ module github.com/sapcc/kube-parrot
 go 1.23
 
 require (
-	github.com/golang/glog v1.2.2
+	github.com/golang/glog v1.2.4
 	github.com/juju/ratelimit v1.0.2
 	github.com/osrg/gobgp v0.0.0-20180701120657-8e6bd4c7145d
 	github.com/prometheus/client_golang v1.20.4
