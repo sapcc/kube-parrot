@@ -5,15 +5,15 @@ go 1.23
 require (
 	github.com/golang/glog v1.2.2
 	github.com/juju/ratelimit v1.0.2
-	github.com/osrg/gobgp v0.0.0-20180701120657-8e6bd4c7145d
-	github.com/prometheus/client_golang v1.20.4
+	github.com/osrg/gobgp 4e5f609012c9
+	github.com/prometheus/client_golang v1.21.1
 	github.com/sapcc/go-traceroute v0.0.0-20210130143923-d034613e85fc
-	github.com/spf13/pflag v1.0.5
+	github.com/spf13/pflag v1.0.6
 	golang.org/x/net v0.33.0
 	k8s.io/api v0.31.1
 	k8s.io/apimachinery v0.31.1
 	k8s.io/client-go v0.31.1
-	k8s.io/utils v0.0.0-20240921022957-49e7df575cb6
+	k8s.io/utils 1f6e0b77f77e
 )
 
 require (
